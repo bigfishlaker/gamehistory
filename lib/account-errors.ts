@@ -17,7 +17,7 @@ export interface FriendlyAccountError {
   steps?: string[];
 }
 
-const PLATFORM_NAMES: Record<Platform, string> = { xbox: 'Xbox', steam: 'Steam', psn: 'PlayStation' };
+const PLATFORM_NAMES: Record<Platform, string> = { xbox: 'Xbox', steam: 'Steam', psn: 'PlayStation', epic: 'Fortnite' };
 
 export const STEAM_PRIVACY_STEPS = [
   'Open Steam and go to your profile',
@@ -27,7 +27,7 @@ export const STEAM_PRIVACY_STEPS = [
 ];
 
 export function parseErrorKey(key: string): { platform: Platform | null; account: string; part: 'games' | 'playtime' | null } {
-  const m = key.match(/^(xbox|steam|psn)-(.*?)(?:-(games|playtime))?$/);
+  const m = key.match(/^(xbox|steam|psn|epic)-(.*?)(?:-(games|playtime))?$/);
   if (!m) return { platform: null, account: key, part: null };
   return { platform: m[1] as Platform, account: m[2], part: (m[3] as 'games' | 'playtime' | undefined) ?? null };
 }
@@ -57,16 +57,24 @@ export function describeAccountError(key: string, message: string): FriendlyAcco
       steps: STEAM_PRIVACY_STEPS,
     };
   }
+  if (platform === 'epic' && /private/i.test(msg)) {
+    return {
+      ...base,
+      kind: 'private',
+      title: 'These Fortnite stats are private',
+      detail: msg,
+    };
+  }
   if (/private/i.test(msg)) {
     return { ...base, kind: 'private', title: `This ${name} profile is private`, detail: `${account}: ${msg}` };
   }
   if (/not found|no player|could not find|couldn't find/i.test(msg)) {
-    const what = platform === 'xbox' ? 'Gamertag' : platform === 'psn' ? 'PSN Online ID' : 'Steam profile';
+    const what = platform === 'xbox' ? 'Gamertag' : platform === 'psn' ? 'PSN Online ID' : platform === 'epic' ? 'Epic account' : 'Steam profile';
     return {
       ...base,
       kind: 'not-found',
       title: `${what} not found`,
-      detail: `We couldn't find "${account}". Check the spelling and try again.`,
+      detail: platform === 'epic' ? `${msg} Check the spelling and try again.` : `We couldn't find "${account}". Check the spelling and try again.`,
     };
   }
   if (platform === 'psn') {

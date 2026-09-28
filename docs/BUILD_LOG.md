@@ -63,3 +63,12 @@ LOC command (PowerShell, from the repo root):
 $f = git ls-files | Where-Object { $_ -match '\.(ts|tsx|css|mjs)$' }
 $f | Where-Object { $_ -notmatch '^(test|__tests__)/' } | ForEach-Object { (Get-Content -LiteralPath $_).Count } | Measure-Object -Sum
 ```
+
+## Post-launch: Epic / Fortnite stats (2026-09-27, ~11 PM ET)
+
+- **What:** "Epic / Fortnite" is a fourth account type (Epic display name, `?epic=` in URLs, localStorage and short links; still max 6 accounts in total). A Fortnite card shows lifetime Battle Royale hours (minutesPlayed/60), matches, wins, win %, kills, K/D, a solo/duo/squad breakdown (trios skipped, always empty) and the stats' last update.
+- **Data model:** Fortnite is also a normal game entry, "Fortnite (Battle Royale stats)", with hours, so it counts in pooled totals and can be picked for the Top N showcase. Epic's stats already include matches played on Xbox/PlayStation, so when a pool also has console Fortnite the merged entry and the grand total use the larger side (never the sum).
+- **Source:** fortnite-api.com `/v2/stats/br/v2?accountType=epic&timeWindow=lifetime`, key sent server-side in the `Authorization` header.
+- **Observed upstream answers** (tested live): 200 stats (Ninja: 33,204 matches, 11,456 wins, 215,425 minutes); 403 `the requested account's stats are not public` (e.g. Clix, Ali-A); 404 `the requested account does not exist`; 404 `the requested profile didnt play any match yet`; 429 `the maximum allowed requests are 3 per 1s`. Headers report 180 requests/minute.
+- **Guards:** name validation (3-16 chars, letters/digits/spaces/`. _ - ' ~ !`), per-IP limit of 60 Fortnite requests/hour on top of the profile limit, a global budget of 600 lookups/hour that fails closed when Redis is unavailable, and a 15-minute Redis cache (private/not-found answers are cached too, so repeats cost nothing).
+- **Tests:** `test/fortnite.test.ts`, `test/fortnite-card.test.tsx` (parser, validator, adapter error mapping, budget/fail-closed, route + cache, per-IP limit, share links, persistence, overlap-free totals, card rendering).

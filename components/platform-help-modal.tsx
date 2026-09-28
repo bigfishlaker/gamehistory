@@ -58,6 +58,26 @@ export function PlatformHelpModal({ platform, isOpen, onClose }: PlatformHelpMod
         },
       ],
     },
+    epic: {
+      title: 'How to Find Your Epic Display Name (Fortnite)',
+      steps: [
+        {
+          number: 1,
+          title: 'Find Your Display Name',
+          description: 'Fortnite: open the main menu, your name is shown at the top right\nepicgames.com: Account → Account Settings → Display Name',
+        },
+        {
+          number: 2,
+          title: 'Enter It Exactly',
+          description: 'Use your Epic display name (not your email). Spaces and symbols count.',
+        },
+        {
+          number: 3,
+          title: 'Make Your Stats Public',
+          description: 'Fortnite: Settings → Account and Privacy → turn on "Show on Career Leaderboard"\nStats come from fortnite-api.com (unofficial) and cover Battle Royale only.',
+        },
+      ],
+    },
     psn: {
       title: 'How to Find Your PSN Online ID',
       steps: [

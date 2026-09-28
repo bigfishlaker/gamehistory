@@ -14,6 +14,7 @@ const platformIcons = {
   xbox: 'Xbox',
   steam: 'Steam',
   psn: 'PSN',
+  epic: 'Epic',
 };
 
 export function GameCard({ game, onClick }: GameCardProps) {

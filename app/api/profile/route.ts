@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createXboxAdapter, createSteamAdapter, createPSNAdapter } from '@/lib/adapters';
+import { createXboxAdapter, createSteamAdapter, createPSNAdapter, createFortniteAdapter } from '@/lib/adapters';
+import { FORTNITE_GAME_ID, FORTNITE_GAME_TITLE, normalizeEpicInput, validateEpicName, type FortniteStats } from '@/lib/fortnite';
 import { PSN_UNAVAILABLE_MESSAGE } from '@/lib/adapters/psn-adapter';
 import { getCache, PROFILE_CACHE_TTL_SECONDS } from '@/lib/cache';
 import { reviveGameArrayDates } from '@/lib/utils/date-reviver';
@@ -19,7 +20,12 @@ interface ProfileData {
   errors: Record<string, string>;
   /** True when some Xbox data was skipped because the hourly OpenXBL budget is nearly used. */
   busy?: boolean;
+  /** Fortnite Battle Royale stats per Epic account id (for the Fortnite card). */
+  fortnite?: Record<string, FortniteStats>;
 }
+
+/** Fortnite stats (and "private"/"not found" answers) are cached for 15 minutes. */
+const FORTNITE_CACHE_TTL_SECONDS = 15 * 60;
 
 /** Raw query values longer than this are rejected before any parsing (URLs included). */
 const MAX_RAW_INPUT_LENGTH = 200;
@@ -29,6 +35,7 @@ interface AccountLoad {
   games: Game[];
   errors: Record<string, string>;
   busy?: boolean;
+  fortnite?: FortniteStats;
 }
 
 export async function GET(request: NextRequest) {
@@ -55,9 +62,10 @@ export async function GET(request: NextRequest) {
   const rawXboxInputs = searchParams.getAll('xbox');
   const rawSteamInputs = searchParams.getAll('steam');
   const rawPsnInputs = searchParams.getAll('psn');
+  const rawEpicInputs = searchParams.getAll('epic');
 
   // Cheap guards before any parsing: pool size and raw length.
-  const rawAll = [...rawXboxInputs, ...rawSteamInputs, ...rawPsnInputs].filter(v => v.trim());
+  const rawAll = [...rawXboxInputs, ...rawSteamInputs, ...rawPsnInputs, ...rawEpicInputs].filter(v => v.trim());
   if (rawAll.length > MAX_ACCOUNTS_PER_POOL) {
     return NextResponse.json(
       { error: `Maximum ${MAX_ACCOUNTS_PER_POOL} accounts allowed per pool (you provided ${rawAll.length})` },
@@ -112,12 +120,14 @@ export async function GET(request: NextRequest) {
   const xboxGamertagsUniq = uniq(xboxGamertags, v => v.toLowerCase());
   const steamIdsUniq = steamIds; // Already deduped above
   const psnIdsUniq = uniq(psnIds, v => v.toLowerCase());
+  const epicNamesUniq = uniq(rawEpicInputs.map(normalizeEpicInput), v => v.toLowerCase());
 
   // Validate account pool size
   const poolSizeValidation = validateAccountPoolSize(
     xboxGamertagsUniq.length,
     steamIdsUniq.length,
-    psnIdsUniq.length
+    psnIdsUniq.length,
+    epicNamesUniq.length
   );
   if (!poolSizeValidation.valid) {
     return NextResponse.json(
@@ -159,10 +169,24 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  // Validate Epic display names
+  for (const name of epicNamesUniq) {
+    const validation = validateEpicName(name);
+    if (!validation.valid) {
+      return NextResponse.json({ error: `Invalid Epic name "${name}": ${validation.error}` }, { status: 400 });
+    }
+  }
+
+  // Epic/Fortnite lookups have their own, stricter per-IP limit on top of the profile limit.
+  if (epicNamesUniq.length > 0) {
+    const fortniteLimited = await enforceRateLimit(request, 'fortnite');
+    if (fortniteLimited) return fortniteLimited;
+  }
+
   // The global OpenXBL budget is enforced per upstream request in XboxAdapter.fetch
   // (lib/rate-limit.ts reserveOpenXblRequest); cached accounts cost nothing.
 
-  if (xboxGamertagsUniq.length === 0 && steamIdsUniq.length === 0 && psnIdsUniq.length === 0) {
+  if (xboxGamertagsUniq.length === 0 && steamIdsUniq.length === 0 && psnIdsUniq.length === 0 && epicNamesUniq.length === 0) {
     return NextResponse.json(
       { error: 'At least one account is required' },
       { status: 400 }
@@ -273,16 +297,60 @@ export async function GET(request: NextRequest) {
     });
   };
 
+  const loadEpic = (name: string) => {
+    const cacheKey = `fortnite:v1:${name.toLowerCase()}`;
+    type Cached = { stats?: FortniteStats; error?: { message: string; code?: string } };
+    return dedupe<AccountLoad>(cacheKey, async () => {
+      const errKey = `epic-${name}`;
+      const toLoad = (stats: FortniteStats): AccountLoad => ({
+        profile: { id: stats.accountId, displayName: stats.name, platform: 'epic' },
+        games: [{
+          id: FORTNITE_GAME_ID,
+          title: FORTNITE_GAME_TITLE,
+          platform: 'epic',
+          playtimeMinutes: stats.overall.minutesPlayed,
+          ...(stats.lastModified ? { lastPlayedAt: new Date(stats.lastModified) } : {}),
+          category: 'Game',
+        }],
+        errors: {},
+        fortnite: stats,
+      });
+      const cached = await cache.get<Cached>(cacheKey);
+      if (cached?.stats) return toLoad(cached.stats);
+      if (cached?.error) return { games: [], errors: { [errKey]: cached.error.message } };
+      const fortnite = createFortniteAdapter();
+      if (!fortnite) {
+        console.error('[fortnite] FORTNITE_API_KEY is not configured; Fortnite lookups are disabled');
+        return { games: [], errors: { [errKey]: 'Fortnite stats are unavailable right now. Please try again later.' } };
+      }
+      const result = await fortnite.getStats(name);
+      if (result.success) {
+        await cache.set<Cached>(cacheKey, { stats: result.data }, FORTNITE_CACHE_TTL_SECONDS);
+        return toLoad(result.data);
+      }
+      const code = result.error.code;
+      const message = errText(result.error);
+      // Private / not found answers are stable: cache them too so repeats don't spend quota.
+      if (code === 'PRIVATE_PROFILE' || code === 'PLAYER_NOT_FOUND') {
+        await cache.set<Cached>(cacheKey, { error: { message, code } }, FORTNITE_CACHE_TTL_SECONDS);
+      }
+      return { games: [], errors: { [errKey]: message }, busy: isBusy(result.error) };
+    });
+  };
+
   // Sequential on purpose: keeps Xbox calls ordered and the per-request cost predictable.
   const loads: AccountLoad[] = [];
   for (const tag of xboxGamertagsUniq) loads.push(await loadXbox(tag));
   for (const id of steamIdsUniq) loads.push(await loadSteam(id));
   for (const id of psnIdsUniq) loads.push(await loadPsn(id));
+  for (const name of epicNamesUniq) loads.push(await loadEpic(name));
+  const fortniteStats: Record<string, FortniteStats> = {};
 
   for (const load of loads) {
     if (load.profile) addAccount(load.profile, load.games);
     Object.assign(errors, load.errors);
     if (load.busy) busy = true;
+    if (load.fortnite && load.profile) fortniteStats[load.profile.id] = load.fortnite;
   }
 
   // Attach per-account stats to profiles
@@ -307,6 +375,7 @@ export async function GET(request: NextRequest) {
     playtime: summarizePlaytime(games, 10),
     errors,
     ...(busy ? { busy: true } : {}),
+    ...(Object.keys(fortniteStats).length ? { fortnite: fortniteStats } : {}),
   };
 
   return NextResponse.json(data);

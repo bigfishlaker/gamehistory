@@ -2,8 +2,8 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 export const metadata: Metadata = {
-  title: 'Help: find your Xbox, Steam and PSN IDs',
-  description: 'How to find your Xbox gamertag, SteamID64 or custom URL, and PSN Online ID, and how to make a private Steam profile public.',
+  title: 'Help: find your Xbox, Steam, PSN and Epic IDs',
+  description: 'How to find your Xbox gamertag, SteamID64 or custom URL, PSN Online ID and Epic display name, and how to make private Steam or Fortnite stats public.',
 };
 
 
@@ -159,6 +159,37 @@ export default function HelpPage() {
                 </div>
               </Step>
             </div>
+          </section>
+
+          {/* Epic / Fortnite Guide */}
+          <section className="card p-6 sm:p-8" id="epic">
+            <div className="mb-6">
+              <h2 className="text-xl font-semibold text-white">Epic Games / Fortnite</h2>
+              <p className="mt-1 text-sm text-zinc-400">
+                Adds your lifetime Fortnite Battle Royale stats: hours, matches, wins, win %, kills, K/D and a solo/duo/squad breakdown.
+              </p>
+            </div>
+
+            <div className="space-y-4">
+              <Step number={1} title="Find Your Epic Display Name">
+                <ul className="list-disc list-inside space-y-1 text-sm">
+                  <li><span className="font-medium">Fortnite:</span> your name is shown at the top right of the lobby</li>
+                  <li><span className="font-medium">epicgames.com:</span> Account → Account Settings → Display Name</li>
+                </ul>
+              </Step>
+              <Step number={2} title="Add It as Epic / Fortnite">
+                Choose <span className="font-medium">Epic / Fortnite</span> in &quot;Add account&quot; and enter the display name (3–16 characters; spaces count). Not your email.
+              </Step>
+              <Step number={3} title="Make Your Stats Public">
+                If your stats are private, turn this on in Fortnite:
+                <div className="text-sm text-zinc-400 mt-1">
+                  Settings → Account and Privacy → Show on Career Leaderboard
+                </div>
+              </Step>
+            </div>
+            <p className="mt-4 text-xs text-zinc-400">
+              Stats come from fortnite-api.com (unofficial, not endorsed by Epic Games) and cover Battle Royale only. If your pool also has Fortnite on Xbox or PlayStation, the hours are counted once (the larger number).
+            </p>
           </section>
         </div>
 

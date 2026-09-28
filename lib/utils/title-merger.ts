@@ -1,8 +1,11 @@
 import type { Game, NormalizedGame } from '../types';
 import { findTitleAlias, getTitleNote } from './title-aliases';
 import { mergeAchievementProgress } from './achievements';
+import { FORTNITE_GAME_TITLE } from '../fortnite';
 
 export function normalizeTitle(title: string): string {
+  // Epic's Battle Royale stats entry is the same game as Xbox/PlayStation "Fortnite".
+  if (title === FORTNITE_GAME_TITLE) return 'fortnite';
   // First check if there's an explicit alias (for COD and other series)
   const alias = findTitleAlias(title);
   if (alias) {
@@ -78,13 +81,29 @@ export function mergeGames(games: Game[]): NormalizedGame[] {
   // unknown ({0, 0}), never a fake "0/N" from a missing/private account.
   for (const entry of normalized.values()) {
     entry.achievementProgress = mergeAchievementProgress(entry.games) ?? { earned: 0, total: 0 };
+    const overlap = epicOverlapMinutes(entry);
+    if (overlap > 0) entry.totalPlaytimeMinutes -= overlap;
   }
 
   return Array.from(normalized.values());
 }
 
+/**
+ * Epic's Fortnite stats are cross-platform (they already include matches played on
+ * Xbox/PlayStation), so when a pool has Fortnite from both Epic and a console, the
+ * hours overlap. Count the larger of the two sides, never their sum: returns the
+ * minutes to subtract from the plain sum (min(epic, others)), 0 when there's no overlap.
+ */
+export function epicOverlapMinutes(entry: Pick<NormalizedGame, 'playtimeByPlatform'>): number {
+  const byPlatform = entry.playtimeByPlatform;
+  const epic = byPlatform.epic ?? 0;
+  if (epic <= 0) return 0;
+  const others = Object.entries(byPlatform).reduce((sum, [p, m]) => (p === 'epic' ? sum : sum + (m ?? 0)), 0);
+  return Math.min(epic, others);
+}
+
 export type SortOption = 'lastPlayed' | 'playtime' | 'completion' | 'title';
-export type FilterOption = 'all' | 'xbox' | 'steam' | 'psn';
+export type FilterOption = 'all' | 'xbox' | 'steam' | 'psn' | 'epic';
 
 export function sortGames(games: NormalizedGame[], sortBy: SortOption): NormalizedGame[] {
   const sorted = [...games];

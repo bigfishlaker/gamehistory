@@ -10,7 +10,7 @@ interface Top6ExportViewProps {
   disabledAccounts: Set<string>;
 }
 
-const platformNames: Record<Platform, string> = { xbox: 'Xbox', steam: 'Steam', psn: 'PlayStation' };
+const platformNames: Record<Platform, string> = { xbox: 'Xbox', steam: 'Steam', psn: 'PlayStation', epic: 'Epic' };
 
 function formatDate(date: Date): string {
   return new Intl.DateTimeFormat('en-US', {

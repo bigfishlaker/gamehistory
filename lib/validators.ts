@@ -1,3 +1,5 @@
+export { validateEpicName } from './fortnite';
+
 export const MAX_ACCOUNTS_PER_POOL = 6;
 export const MAX_INPUT_LENGTH = 100;
 
@@ -78,9 +80,10 @@ export function validatePSNId(psnId: string): ValidationResult {
 export function validateAccountPoolSize(
   xboxCount: number,
   steamCount: number,
-  psnCount: number
+  psnCount: number,
+  epicCount = 0
 ): ValidationResult {
-  const total = xboxCount + steamCount + psnCount;
+  const total = xboxCount + steamCount + psnCount + epicCount;
 
   if (total === 0) {
     return { valid: false, error: 'At least one account is required' };

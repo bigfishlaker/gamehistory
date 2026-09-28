@@ -73,7 +73,7 @@ function DashboardContent() {
           params.append(account.platform, account.identifier);
         }
       } else {
-        for (const platform of ['xbox', 'steam', 'psn'] as const) {
+        for (const platform of ['xbox', 'steam', 'psn', 'epic'] as const) {
           for (const id of query.getAll(platform)) {
             if (id.trim()) params.append(platform, id.trim());
           }

@@ -15,7 +15,7 @@ export default function PrivacyPage() {
           <section>
             <h2 className="text-xl font-semibold text-white mb-4">Overview</h2>
             <p>
-              GAMER.ID is a gaming profile aggregator that displays publicly available gaming data from Xbox, Steam, and PlayStation Network. We take your privacy seriously and are committed to transparency about what data we collect and how we use it.
+              GAMER.ID is a gaming profile aggregator that displays publicly available gaming data from Xbox, Steam, PlayStation Network and Fortnite (Epic Games). We take your privacy seriously and are committed to transparency about what data we collect and how we use it.
             </p>
           </section>
 
@@ -30,6 +30,7 @@ export default function PrivacyPage() {
               <li>Xbox: Gamertag, avatar, game library, achievements, playtime (via OpenXBL API)</li>
               <li>Steam: Display name, avatar, game library, achievements, playtime (via Steam Web API)</li>
               <li>PlayStation: PSN ID, avatar, game library, achievements (via unofficial PSN API)</li>
+              <li>Epic Games / Fortnite: Epic display name, account ID and public Battle Royale stats (via the unofficial fortnite-api.com)</li>
             </ul>
             <p className="mt-3">
               This data is already public and accessible to anyone. We simply aggregate it in one place.
@@ -98,12 +99,18 @@ export default function PrivacyPage() {
               <li>
                 <strong>PlayStation Network</strong> (unofficial API via psn-api npm package) - PSN profile data
               </li>
+              <li>
+                <strong>fortnite-api.com</strong> (<a href="https://fortnite-api.com" className="text-link" target="_blank" rel="noopener noreferrer">fortnite-api.com</a>, unofficial) - Fortnite Battle Royale stats for an Epic display name
+              </li>
             </ul>
             <p className="mt-3">
               Each service has its own terms of service and privacy policy. By using GAMER.ID, you acknowledge that we fetch data from these services on your behalf.
             </p>
             <p className="mt-3 text-zinc-400">
               <strong>Note:</strong> The PSN integration uses an unofficial API and is not endorsed by Sony. Use of PSN features is at your own risk and may violate Sony&apos;s Terms of Service.
+            </p>
+            <p className="mt-3 text-zinc-400">
+              <strong>Note:</strong> Fortnite stats come from fortnite-api.com, an unofficial third-party service that is not affiliated with or endorsed by Epic Games. Only stats a player has made public (Show on Career Leaderboard) are available; results are cached for 15 minutes.
             </p>
           </section>
 

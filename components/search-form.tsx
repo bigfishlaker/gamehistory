@@ -4,11 +4,12 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { PlatformHelpModal } from './platform-help-modal';
 import { normalizeSteamInput } from '@/lib/utils/steam-parser';
+import { normalizeEpicInput } from '@/lib/fortnite';
 import type { Platform } from '@/lib/types';
 import { usePendingAccounts, setPendingAccounts } from '@/lib/saved-accounts';
 
 interface Account {
-  platform: 'xbox' | 'steam' | 'psn';
+  platform: 'xbox' | 'steam' | 'psn' | 'epic';
   identifier: string;
 }
 
@@ -17,14 +18,14 @@ export function SearchForm() {
   // Added-but-not-submitted accounts live in sessionStorage so they survive Back/refresh.
   const accounts: Account[] = usePendingAccounts();
   const setAccounts = (next: Account[]) => setPendingAccounts(next);
-  const [platform, setPlatform] = useState<'xbox' | 'steam' | 'psn'>('xbox');
+  const [platform, setPlatform] = useState<Account['platform']>('xbox');
   const [identifier, setIdentifier] = useState('');
   const [helpPlatform, setHelpPlatform] = useState<Platform | null>(null);
 
   // Send the Steam ID64 / vanity name rather than a pasted profile URL. Unrecognized
   // input is passed through; the API answers with a friendly error.
   const clean = (p: Account['platform'], value: string) =>
-    p === 'steam' ? normalizeSteamInput(value)?.value ?? value.trim() : value.trim();
+    p === 'steam' ? normalizeSteamInput(value)?.value ?? value.trim() : p === 'epic' ? normalizeEpicInput(value) : value.trim();
 
   const handleAdd = () => {
     if (!identifier.trim()) return;
@@ -79,13 +80,14 @@ export function SearchForm() {
         <div className="flex gap-2">
           <select
             value={platform}
-            onChange={(e) => setPlatform(e.target.value as 'xbox' | 'steam' | 'psn')}
+            onChange={(e) => setPlatform(e.target.value as Account['platform'])}
             aria-label="Platform"
             className="field min-h-11 px-3 py-2.5 text-sm"
           >
             <option value="xbox">Xbox</option>
             <option value="steam">Steam</option>
             <option value="psn">PSN</option>
+            <option value="epic">Epic / Fortnite</option>
           </select>
           <div className="flex-1 min-w-0 relative">
             <input
@@ -95,6 +97,7 @@ export function SearchForm() {
               placeholder={
                 platform === 'xbox' ? 'Gamertag' 
                 : platform === 'steam' ? 'Steam ID or profile URL'
+                : platform === 'epic' ? 'Epic display name'
                 : 'PSN Online ID'
               }
               aria-label="Account ID"

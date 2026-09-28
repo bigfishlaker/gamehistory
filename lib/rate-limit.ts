@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { getStore, MemoryStore } from './store';
+import { FORTNITE_BUSY_MESSAGE } from './fortnite';
 
 /* ------------------------------------------------------------------ *
  * Client IP
@@ -33,6 +34,8 @@ export const ROUTE_LIMITS = {
   achievements: { limit: 120, windowSeconds: 3600 },
   image: { limit: 600, windowSeconds: 600 },
   share: { limit: 20, windowSeconds: 3600 },
+  /** Extra per-IP limit for /api/profile requests that include Epic/Fortnite accounts. */
+  fortnite: { limit: 60, windowSeconds: 3600 },
 } satisfies Record<string, RateLimitRule>;
 
 export type RouteBucket = keyof typeof ROUTE_LIMITS;
@@ -175,16 +178,19 @@ export async function getOpenXblBudget(): Promise<BudgetStatus> {
  * calls, so 1,500/hour (~500 uncached lookups) leaves plenty of headroom.
  * PSN runs on the owner's own account, so keep it modest: a lookup costs ~5
  * units (see PSN_COST in the adapter), so 600/hour is ~120 uncached lookups.
+ * Fortnite (fortnite-api.com): 600 lookups/hour, one call per uncached lookup, fails closed.
  * Cached profile/achievement hits never reach the adapters, so they cost nothing.
  */
-export const UPSTREAM_HOURLY_LIMITS = { steam: 1500, psn: 600 } as const;
+export const UPSTREAM_HOURLY_LIMITS = { steam: 1500, psn: 600, fortnite: 600 } as const;
+/** Upstreams that refuse (instead of using a per-process budget) when the store errors. */
+const UPSTREAM_FAIL_CLOSED: Partial<Record<keyof typeof UPSTREAM_HOURLY_LIMITS, true>> = { fortnite: true };
 export type UpstreamName = keyof typeof UPSTREAM_HOURLY_LIMITS;
 
 export const STEAM_BUSY_MESSAGE =
   'GAMER.ID is busy right now: the hourly Steam lookup limit is used up. Please try again in a few minutes.';
 export const PSN_BUSY_MESSAGE =
   'GAMER.ID is busy right now: the hourly PlayStation lookup limit is used up. Please try again in a few minutes.';
-export const UPSTREAM_BUSY_MESSAGES: Record<UpstreamName, string> = { steam: STEAM_BUSY_MESSAGE, psn: PSN_BUSY_MESSAGE };
+export const UPSTREAM_BUSY_MESSAGES: Record<UpstreamName, string> = { steam: STEAM_BUSY_MESSAGE, psn: PSN_BUSY_MESSAGE, fortnite: FORTNITE_BUSY_MESSAGE };
 
 const fallbackBudgets = ((globalThis as unknown as { __ghFallbackBudgets?: MemoryStore }).__ghFallbackBudgets ??= new MemoryStore());
 
@@ -201,6 +207,10 @@ export async function reserveUpstream(name: UpstreamName, cost = 1): Promise<{ a
   try {
     ({ count } = await getStore().incr(key, ttl, cost));
   } catch (err) {
+    if (UPSTREAM_FAIL_CLOSED[name]) {
+      console.warn(`[budget] store error, refusing ${name} request (fail closed):`, err instanceof Error ? err.message : err);
+      return { allowed: false, used: 0, limit };
+    }
     console.warn(`[budget] store error, using per-process ${name} budget:`, err instanceof Error ? err.message : err);
     ({ count } = await fallbackBudgets.incr(key, ttl, cost));
   }

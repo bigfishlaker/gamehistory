@@ -9,7 +9,7 @@
  */
 import { useMemo, useSyncExternalStore } from 'react';
 
-export type SavedPlatform = 'xbox' | 'steam' | 'psn';
+export type SavedPlatform = 'xbox' | 'steam' | 'psn' | 'epic';
 
 export interface SavedAccount {
   platform: SavedPlatform;
@@ -28,9 +28,10 @@ export const CURRENT_KEY = 'gamerid:accounts:current:v1';
 export const RECENT_KEY = 'gamerid:accounts:recent:v1';
 export const PENDING_KEY = 'gamerid:accounts:pending:v1';
 export const MAX_RECENT = 5;
+export const ACCOUNT_PLATFORMS = ['xbox', 'steam', 'psn', 'epic'] as const;
 const MAX_ACCOUNTS = 10;
 const CHANGE_EVENT = 'gamerid:accounts-changed';
-const PLATFORMS: readonly SavedPlatform[] = ['xbox', 'steam', 'psn'];
+const PLATFORMS: readonly SavedPlatform[] = ['xbox', 'steam', 'psn', 'epic'];
 
 function isPlatform(value: unknown): value is SavedPlatform {
   return typeof value === 'string' && (PLATFORMS as readonly string[]).includes(value);
@@ -100,7 +101,7 @@ export function accountSetKey(accounts: SavedAccount[]): string {
     .join('|');
 }
 
-/** Query string (no leading "?") with xbox/steam/psn params plus off= when set. */
+/** Query string (no leading "?") with xbox/steam/psn/epic params plus off= when set. */
 export function accountSetQuery(set: Pick<AccountSet, 'accounts' | 'off'>): string {
   const params = new URLSearchParams();
   for (const platform of PLATFORMS) {
@@ -238,7 +239,7 @@ export function withDisplayNames(
   });
 }
 
-/** Read xbox/steam/psn entries (in platform order) from a query string. */
+/** Read xbox/steam/psn/epic entries (in platform order) from a query string. */
 export function accountsFromParams(params: URLSearchParams): Array<{ platform: SavedPlatform; identifier: string }> {
   const out: Array<{ platform: SavedPlatform; identifier: string }> = [];
   for (const platform of PLATFORMS) {

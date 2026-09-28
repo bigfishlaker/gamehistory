@@ -4,7 +4,7 @@
  */
 
 export interface DemoAccount {
-  platform: 'xbox' | 'steam' | 'psn';
+  platform: 'xbox' | 'steam' | 'psn' | 'epic';
   identifier: string;
   displayName?: string;
 }
@@ -21,6 +21,7 @@ const PLATFORM_LABELS: Record<DemoAccount['platform'], string> = {
   xbox: 'Xbox',
   steam: 'Steam',
   psn: 'PlayStation',
+  epic: 'Epic',
 };
 
 /** e.g. "Example: Stallion83 (public Xbox profile)". */

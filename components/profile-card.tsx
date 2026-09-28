@@ -9,12 +9,14 @@ const platformColors = {
   xbox: 'border-zinc-800',
   steam: 'border-zinc-800',
   psn: 'border-zinc-800',
+  epic: 'border-zinc-800',
 };
 
 const platformLabels = {
   xbox: 'Xbox',
   steam: 'Steam',
   psn: 'PlayStation',
+  epic: 'Epic / Fortnite',
 };
 
 export function ProfileCard({ profile }: ProfileCardProps) {

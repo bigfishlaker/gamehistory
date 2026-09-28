@@ -5,6 +5,7 @@
  * toggles and the showcase view are stored. No IP, no personal data.
  */
 import { validateAccountPoolSize, validateGamertag, validatePSNId, validateSteamId, MAX_ACCOUNTS_PER_POOL } from './validators';
+import { normalizeEpicInput, validateEpicName } from './fortnite';
 import { normalizePSNInput, normalizeXboxInput } from './input-normalizer';
 import { normalizeSteamInput } from './utils/steam-parser';
 import { SHOWCASE_SIZES } from './export/showcase-layout';
@@ -49,6 +50,8 @@ export interface ShareRecord {
   xbox: string[];
   steam: string[];
   psn: string[];
+  /** Epic display names (Fortnite stats). Optional: records made before Epic support have none. */
+  epic?: string[];
   /** Disabled account keys (platform:profileId), as in the /p `off=` param. */
   off: string[];
   /** Public display name of the first account, used for the link preview title. */
@@ -63,8 +66,8 @@ export interface ShareRecord {
 
 export type ShareValidation = { ok: true; record: ShareRecord } | { ok: false; error: string };
 
-const OFF_RE = /^(xbox|steam|psn):[A-Za-z0-9_.-]{1,64}$/;
-const TOP6_RE = /^(xbox|steam|psn|manual)-[A-Za-z0-9_.:-]{1,80}$/;
+const OFF_RE = /^(xbox|steam|psn|epic):[A-Za-z0-9_.-]{1,64}$/;
+const TOP6_RE = /^(xbox|steam|psn|epic|manual)-[A-Za-z0-9_.:-]{1,80}$/;
 const NAME_RE = /^[\p{L}\p{N} _.#-]{1,32}$/u;
 
 function strings(value: unknown, max: number): string[] | null {
@@ -86,7 +89,8 @@ export function validateShareInput(body: unknown, now = Date.now()): ShareValida
   const rawXbox = strings(b.xbox, MAX_ACCOUNTS_PER_POOL);
   const rawSteam = strings(b.steam, MAX_ACCOUNTS_PER_POOL);
   const rawPsn = strings(b.psn, MAX_ACCOUNTS_PER_POOL);
-  if (!rawXbox || !rawSteam || !rawPsn) return { ok: false, error: 'Accounts must be arrays of strings' };
+  const rawEpic = strings(b.epic, MAX_ACCOUNTS_PER_POOL);
+  if (!rawXbox || !rawSteam || !rawPsn || !rawEpic) return { ok: false, error: 'Accounts must be arrays of strings' };
 
   const xbox: string[] = [];
   for (const input of rawXbox) {
@@ -112,15 +116,25 @@ export function validateShareInput(body: unknown, now = Date.now()): ShareValida
     psn.push(id.trim());
   }
 
+  const epic: string[] = [];
+  for (const input of rawEpic) {
+    const id = normalizeEpicInput(input);
+    const v = validateEpicName(id);
+    if (!v.valid) return { ok: false, error: `Invalid Epic name: ${v.error}` };
+    epic.push(id);
+  }
+  const epicUniq = uniqFold(epic, v => v.toLowerCase());
+
   const record: ShareRecord = {
     v: 1,
     xbox: uniqFold(xbox, v => v.toLowerCase()),
     steam: uniqFold(steam, v => v),
     psn: uniqFold(psn, v => v.toLowerCase()),
+    ...(epicUniq.length ? { epic: epicUniq } : {}),
     off: [],
     createdAt: now,
   };
-  const pool = validateAccountPoolSize(record.xbox.length, record.steam.length, record.psn.length);
+  const pool = validateAccountPoolSize(record.xbox.length, record.steam.length, record.psn.length, epicUniq.length);
   if (!pool.valid) return { ok: false, error: pool.error ?? 'Invalid account set' };
 
   const off = strings(b.off, MAX_ACCOUNTS_PER_POOL);
@@ -152,11 +166,12 @@ export function validateShareInput(body: unknown, now = Date.now()): ShareValida
 }
 
 /** /p query string for a stored record. */
-export function shareRecordQuery(r: Pick<ShareRecord, 'xbox' | 'steam' | 'psn' | 'off' | 'size' | 'top6' | 'tab' | 'example'>): string {
+export function shareRecordQuery(r: Pick<ShareRecord, 'xbox' | 'steam' | 'psn' | 'epic' | 'off' | 'size' | 'top6' | 'tab' | 'example'>): string {
   const p = new URLSearchParams();
   r.xbox.forEach(v => p.append('xbox', v));
   r.steam.forEach(v => p.append('steam', v));
   r.psn.forEach(v => p.append('psn', v));
+  (r.epic ?? []).forEach(v => p.append('epic', v));
   if (r.off.length) p.set('off', r.off.join(','));
   if (r.top6?.length) p.set('top6', r.top6.join(','));
   if (r.size && r.size !== 6) p.set('size', String(r.size));
@@ -167,16 +182,16 @@ export function shareRecordQuery(r: Pick<ShareRecord, 'xbox' | 'steam' | 'psn' |
 
 /** Same set + view => same code (so repeated shares don't mint new links). */
 export function canonicalShareKey(r: ShareRecord): string {
-  return shareRecordQuery({ ...r, xbox: [...r.xbox].map(v => v.toLowerCase()).sort(), steam: [...r.steam].sort(), psn: [...r.psn].map(v => v.toLowerCase()).sort() }) + (r.name ? `#${r.name}` : '');
+  return shareRecordQuery({ ...r, xbox: [...r.xbox].map(v => v.toLowerCase()).sort(), steam: [...r.steam].sort(), psn: [...r.psn].map(v => v.toLowerCase()).sort(), epic: r.epic ? [...r.epic].map(v => v.toLowerCase()).sort() : undefined }) + (r.name ? `#${r.name}` : '');
 }
 
 export function isShareRecord(v: unknown): v is ShareRecord {
   if (!v || typeof v !== 'object') return false;
   const r = v as Record<string, unknown>;
-  return r.v === 1 && Array.isArray(r.xbox) && Array.isArray(r.steam) && Array.isArray(r.psn) && Array.isArray(r.off);
+  return r.v === 1 && Array.isArray(r.xbox) && Array.isArray(r.steam) && Array.isArray(r.psn) && Array.isArray(r.off) && (r.epic === undefined || Array.isArray(r.epic));
 }
 
 /** Preview name: stored display name, else the first identifier. */
 export function shareDisplayName(r: ShareRecord): string {
-  return r.name || r.xbox[0] || r.psn[0] || r.steam[0] || 'Someone';
+  return r.name || r.xbox[0] || r.psn[0] || r.epic?.[0] || r.steam[0] || 'Someone';
 }

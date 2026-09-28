@@ -1,6 +1,6 @@
 # GAMER.ID
 
-**Your whole gaming history, Xbox, Steam and PlayStation, on one page you can share.**
+**Your whole gaming history, Xbox, Steam, PlayStation and Fortnite, on one page you can share.**
 
 **Live:** https://gamer-id.vercel.app · Try the example: https://gamer-id.vercel.app/p?xbox=Stallion83&example=1
 
@@ -8,7 +8,8 @@
 
 ## What it does
 
-- **One profile across three platforms.** Enter an Xbox gamertag, a Steam ID/vanity URL and a PSN online ID (any combination). GAMER.ID pulls each library and merges the same game across platforms into one entry with combined playtime and achievements.
+- **One profile across four platforms.** Enter an Xbox gamertag, a Steam ID/vanity URL, a PSN online ID and an Epic display name (any combination, up to 6 accounts). GAMER.ID pulls each library and merges the same game across platforms into one entry with combined playtime and achievements.
+- **Fortnite stats (Epic).** Add an Epic display name to get a Fortnite card: hours, matches, wins, win %, kills, K/D and a solo/duo/squad breakdown, from [fortnite-api.com](https://fortnite-api.com) (unofficial). Fortnite also appears as a game ("Fortnite (Battle Royale stats)") in pooled hours and the Top N showcase; if the pool has Fortnite on Xbox/PlayStation too, the hours are counted once (the larger number), because Epic's stats already include console matches.
 - **Game library.** Search, sort (last played, playtime, completion, title) and filter by platform. Large libraries are paginated so phones stay fast.
 - **Top 6 / 10 / 25 / 50 showcase.** Pick your games, add a subtitle and profile picture, then save it as an image sized for X, copy a short link, or share it straight to X.
 - **Dashboard.** Total hours, per-platform breakdown and your most-played games.
@@ -35,15 +36,14 @@
 - **Xbox:** [OpenXBL](https://xbl.io) API
 - **Steam:** Steam Web API
 - **PlayStation:** [`psn-api`](https://github.com/achievements-app/psn-api) authenticated with an NPSSO token
+- **Fortnite:** [fortnite-api.com](https://fortnite-api.com) Battle Royale stats (server-side key in the `Authorization` header, 15-minute cache, 600 lookups/hour global budget)
 - **Vitest** + Testing Library; `html-to-image` for the showcase export
-
-(Fortnite stats were considered early on. The Fortnite API only appears in comments and is not used.)
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-  U[Browser<br/>localStorage: saved accounts] -->|GET /p?xbox=&steam=&psn=| N[Next.js App Router<br/>on Vercel]
+  U[Browser<br/>localStorage: saved accounts] -->|GET /p?xbox=&steam=&psn=&epic=| N[Next.js App Router<br/>on Vercel]
   U -->|fetch| API[/api/profile<br/>/api/achievements<br/>/api/share<br/>/api/image/]
   N --> API
   API --> RL{Rate limit<br/>per IP}
@@ -51,7 +51,8 @@ flowchart LR
   API --> X[OpenXBL<br/>Xbox]
   API --> S[Steam Web API]
   API --> P[psn-api<br/>PlayStation]
-  X & S & P --> M[Adapters → normalize → title merger]
+  API --> F[fortnite-api.com<br/>Fortnite]
+  X & S & P & F --> M[Adapters → normalize → title merger]
   M --> U
   PX[proxy.ts] -->|page views, hashed| C
   U -->|beforeSend filter| VA[Vercel Web Analytics]

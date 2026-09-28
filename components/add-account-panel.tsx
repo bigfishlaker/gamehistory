@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { normalizeSteamInput } from '@/lib/utils/steam-parser';
 import { normalizeXboxInput, normalizePSNInput } from '@/lib/input-normalizer';
+import { normalizeEpicInput, validateEpicName } from '@/lib/fortnite';
 import type { Platform } from '@/lib/types';
 
 interface AddAccountPanelProps {
@@ -61,6 +62,14 @@ export function AddAccountPanel({ onAdd, onCancel, currentAccountCount, maxAccou
           setIsLoading(false);
           return;
         }
+      } else if (platform === 'epic') {
+        identifier = normalizeEpicInput(input);
+        const check = validateEpicName(identifier);
+        if (!check.valid) {
+          setError(check.error || 'Invalid Epic display name');
+          setIsLoading(false);
+          return;
+        }
       }
 
       await onAdd(platform, identifier);
@@ -79,7 +88,9 @@ export function AddAccountPanel({ onAdd, onCancel, currentAccountCount, maxAccou
     xbox: 'Gamertag or xbox.com profile URL',
     steam: 'Steam ID or steamcommunity.com URL',
     psn: 'PSN ID or psnprofiles.com URL',
+    epic: 'Epic display name (Fortnite)',
   };
+  const platformLabels: Record<Platform, string> = { xbox: 'Xbox', steam: 'Steam', psn: 'PSN', epic: 'Epic / Fortnite' };
 
   const remainingSlots = maxAccounts - currentAccountCount;
 
@@ -108,21 +119,21 @@ export function AddAccountPanel({ onAdd, onCancel, currentAccountCount, maxAccou
       <form onSubmit={handleSubmit} className="space-y-3">
         <div>
           <span id="add-account-platform" className="block text-sm text-zinc-400 mb-2">Platform</span>
-          <div className="grid grid-cols-3 gap-2" role="group" aria-labelledby="add-account-platform">
-            {(['xbox', 'steam', 'psn'] as Platform[]).map((p) => (
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4" role="group" aria-labelledby="add-account-platform">
+            {(['xbox', 'steam', 'psn', 'epic'] as Platform[]).map((p) => (
               <button
                 key={p}
                 type="button"
                 aria-pressed={platform === p}
                 onClick={() => setPlatform(p)}
                 disabled={isLoading}
-                className={`min-h-11 py-2 px-4 rounded-lg capitalize transition-colors ${
+                className={`min-h-11 py-2 px-3 rounded-lg text-sm transition-colors ${
                   platform === p
                     ? 'bg-zinc-100 text-zinc-950'
                     : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-white'
                 } disabled:opacity-50`}
               >
-                {p}
+                {platformLabels[p]}
               </button>
             ))}
           </div>
@@ -140,7 +151,9 @@ export function AddAccountPanel({ onAdd, onCancel, currentAccountCount, maxAccou
             className="field min-h-11 w-full px-4 py-2 disabled:opacity-50"
           />
           <p className="text-xs text-zinc-400 mt-1">
-            Paste a profile URL or enter the ID directly
+            {platform === 'epic'
+              ? 'Your Epic display name. Shows Fortnite Battle Royale stats (the stats must be public).'
+              : 'Paste a profile URL or enter the ID directly'}
           </p>
         </div>
 

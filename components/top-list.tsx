@@ -16,7 +16,7 @@ interface TopListProps {
 type ListSize = 10 | 25 | 50;
 type Metric = 'playtime' | 'achievements';
 
-const platformNames: Record<Platform, string> = { xbox: 'Xbox', steam: 'Steam', psn: 'PlayStation' };
+const platformNames: Record<Platform, string> = { xbox: 'Xbox', steam: 'Steam', psn: 'PlayStation', epic: 'Epic' };
 
 export function TopList({ games, playerName, avatarUrl }: TopListProps) {
   const [size, setSize] = useState<ListSize>(10);

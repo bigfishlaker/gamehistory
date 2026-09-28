@@ -1,5 +1,5 @@
 import type { Game, Platform, PlaytimeSummary, PlatformPlaytimeTotal } from '../types';
-import { mergeGames, sortGames } from './title-merger';
+import { mergeGames, sortGames, epicOverlapMinutes } from './title-merger';
 
 export function hasPlaytime(game: Game): boolean {
   return game.playtimeMinutes !== undefined && game.playtimeMinutes !== null;
@@ -23,9 +23,12 @@ export function summarizePlaytime(games: Game[], topN = 10): PlaytimeSummary {
     }
   }
 
-  const totalMinutes = Object.values(byPlatform).reduce((sum, p) => sum + (p?.minutes ?? 0), 0);
+  const merged = mergeGames(games);
+  // Fortnite from Epic overlaps console Fortnite hours: count the larger side only.
+  const overlap = merged.reduce((sum, g) => sum + epicOverlapMinutes(g), 0);
+  const totalMinutes = Object.values(byPlatform).reduce((sum, p) => sum + (p?.minutes ?? 0), 0) - overlap;
 
-  const topCombined = sortGames(mergeGames(games), 'playtime')
+  const topCombined = sortGames(merged, 'playtime')
     .filter(g => g.playtimeKnown && g.totalPlaytimeMinutes > 0)
     .slice(0, topN)
     .map(g => ({

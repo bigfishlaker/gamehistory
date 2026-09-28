@@ -1,4 +1,5 @@
-export type Platform = 'xbox' | 'steam' | 'psn';
+/** 'epic' = Epic Games / Fortnite (Battle Royale stats via fortnite-api.com). */
+export type Platform = 'xbox' | 'steam' | 'psn' | 'epic';
 
 export interface PlayerProfile {
   id: string;

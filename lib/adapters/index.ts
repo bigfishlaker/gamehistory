@@ -1,12 +1,14 @@
 import { XboxAdapter } from './xbox-adapter';
 import { SteamAdapter } from './steam-adapter';
 import { PSNAdapter } from './psn-adapter';
+import { FortniteAdapter } from './fortnite-adapter';
 import type { PlatformAdapter } from './platform-adapter';
 
 export type { PlatformAdapter } from './platform-adapter';
 export { XboxAdapter } from './xbox-adapter';
 export { SteamAdapter } from './steam-adapter';
 export { PSNAdapter } from './psn-adapter';
+export { FortniteAdapter } from './fortnite-adapter';
 
 export function createXboxAdapter(): XboxAdapter | null {
   const apiKey = process.env.OPENXBL_API_KEY;
@@ -30,6 +32,14 @@ export function createPSNAdapter(): PSNAdapter | null {
     return null;
   }
   return new PSNAdapter(npsso);
+}
+
+export function createFortniteAdapter(): FortniteAdapter | null {
+  const apiKey = process.env.FORTNITE_API_KEY;
+  if (!apiKey) {
+    return null;
+  }
+  return new FortniteAdapter(apiKey);
 }
 
 export function getAvailableAdapters(): PlatformAdapter[] {

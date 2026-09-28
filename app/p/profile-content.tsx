@@ -29,6 +29,8 @@ import { getDemoLabel } from '@/lib/demo-accounts';
 import { buildShareText, buildXIntentUrl } from '@/lib/share';
 import { AccountErrors } from '@/components/account-errors';
 import { ProfileSkeleton } from '@/components/skeletons';
+import { FortniteCard } from '@/components/fortnite-card';
+import type { FortniteStats } from '@/lib/fortnite';
 
 const MAX_ACCOUNTS_PER_POOL = 6;
 
@@ -37,9 +39,11 @@ interface ProfileData {
   games: Game[];
   playtime?: PlaytimeSummary;
   errors: Record<string, string>;
+  /** Fortnite Battle Royale stats per Epic account id. */
+  fortnite?: Record<string, FortniteStats>;
 }
 
-const platformNames: Record<Platform, string> = { xbox: 'Xbox', steam: 'Steam', psn: 'PlayStation' };
+const platformNames: Record<Platform, string> = { xbox: 'Xbox', steam: 'Steam', psn: 'PlayStation', epic: 'Epic / Fortnite' };
 
 // Large libraries (thousands of games) render in pages to keep the page responsive.
 const LIBRARY_PAGE = 60;
@@ -53,9 +57,11 @@ function ProfileContent() {
   const xboxKey = searchParams.getAll('xbox').join('\n');
   const steamKey = searchParams.getAll('steam').join('\n');
   const psnKey = searchParams.getAll('psn').join('\n');
+  const epicKey = searchParams.getAll('epic').join('\n');
   const xboxAccounts = useMemo(() => (xboxKey ? xboxKey.split('\n') : []), [xboxKey]);
   const steamAccounts = useMemo(() => (steamKey ? steamKey.split('\n') : []), [steamKey]);
   const psnAccounts = useMemo(() => (psnKey ? psnKey.split('\n') : []), [psnKey]);
+  const epicAccounts = useMemo(() => (epicKey ? epicKey.split('\n') : []), [epicKey]);
   // ?example=1 marks the example profile: it is shown but never saved as the visitor's accounts.
   const isExample = searchParams.get('example') === '1';
 
@@ -65,8 +71,9 @@ function ProfileContent() {
     xboxAccounts.forEach(id => params.append('xbox', id));
     steamAccounts.forEach(id => params.append('steam', id));
     psnAccounts.forEach(id => params.append('psn', id));
+    epicAccounts.forEach(id => params.append('epic', id));
     return params.toString();
-  }, [xboxAccounts, steamAccounts, psnAccounts]);
+  }, [xboxAccounts, steamAccounts, psnAccounts, epicAccounts]);
 
   // Parse disabled accounts from URL (&off=xbox:2533274800000000,steam:123)
   const disabledAccountsParam = searchParams.get('off') || '';
@@ -76,7 +83,7 @@ function ProfileContent() {
 
   const [data, setData] = useState<ProfileData | null>(null);
   // Start in the loading state when there are accounts to fetch (no "No profile data" flash).
-  const [loading, setLoading] = useState(() => Boolean(xboxKey || steamKey || psnKey));
+  const [loading, setLoading] = useState(() => Boolean(xboxKey || steamKey || psnKey || epicKey));
   const [loadError, setLoadError] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<SortOption>('lastPlayed');
   const [libraryLimit, setLibraryLimit] = useState(LIBRARY_PAGE);
@@ -111,7 +118,7 @@ function ProfileContent() {
   const [manualGames, setManualGames] = useState<ManualGame[]>([]);
   const [showManualGameEntry, setShowManualGameEntry] = useState(false);
   
-  const storageKey = `profile:${[...xboxAccounts, ...steamAccounts, ...psnAccounts].sort().join(',')}`;
+  const storageKey = `profile:${[...xboxAccounts, ...steamAccounts, ...psnAccounts, ...epicAccounts.map(n => `epic:${n}`)].sort().join(',')}`;
   const pictureStorageKey = `avatar:${storageKey}`;
   
   const [profilePictureUrl] = useState<string | null>(() => {
@@ -164,7 +171,7 @@ function ProfileContent() {
   }, []);
 
   useEffect(() => {
-    if (xboxAccounts.length === 0 && steamAccounts.length === 0 && psnAccounts.length === 0) {
+    if (xboxAccounts.length === 0 && steamAccounts.length === 0 && psnAccounts.length === 0 && epicAccounts.length === 0) {
       return;
     }
 
@@ -174,6 +181,7 @@ function ProfileContent() {
       xboxAccounts.forEach(gt => params.append('xbox', gt));
       steamAccounts.forEach(id => params.append('steam', id));
       psnAccounts.forEach(id => params.append('psn', id));
+      epicAccounts.forEach(id => params.append('epic', id));
 
       setLoadError(null);
       try {
@@ -198,7 +206,7 @@ function ProfileContent() {
     };
 
     fetchProfile();
-  }, [xboxAccounts, steamAccounts, psnAccounts]);
+  }, [xboxAccounts, steamAccounts, psnAccounts, epicAccounts]);
 
   // Filter data based on enabled accounts
   const filteredData = useMemo<ProfileData | null>(() => {
@@ -220,6 +228,7 @@ function ProfileContent() {
       games: filteredGames,
       playtime: summarizePlaytime(filteredGames, 10),
       errors: data.errors,
+      fortnite: data.fortnite,
     };
   }, [data, disabledAccounts]);
 
@@ -230,8 +239,9 @@ function ProfileContent() {
     xboxAccounts.forEach(id => params.append('xbox', id));
     steamAccounts.forEach(id => params.append('steam', id));
     psnAccounts.forEach(id => params.append('psn', id));
+    epicAccounts.forEach(id => params.append('epic', id));
     saveAccountSet(withDisplayNames(accountsFromParams(params), data.profiles), Array.from(disabledAccounts));
-  }, [isExample, data, disabledAccounts, xboxAccounts, steamAccounts, psnAccounts]);
+  }, [isExample, data, disabledAccounts, xboxAccounts, steamAccounts, psnAccounts, epicAccounts]);
 
   const showToast = useCallback((message: string) => {
     setToast(message);
@@ -311,6 +321,7 @@ function ProfileContent() {
         profiles: [...data.profiles, newProfile],
         games: [...data.games, ...result.games],
         errors: { ...data.errors, ...result.errors },
+        fortnite: { ...data.fortnite, ...result.fortnite },
       };
 
       setData(updatedData);
@@ -353,6 +364,7 @@ function ProfileContent() {
       profiles: updatedProfiles,
       games: updatedGames,
       errors: data.errors,
+      fortnite: data.fortnite,
     };
 
     setData(updatedData);
@@ -546,6 +558,7 @@ function ProfileContent() {
       xbox: params.getAll('xbox'),
       steam: params.getAll('steam'),
       psn: params.getAll('psn'),
+      epic: params.getAll('epic'),
       off: (params.get('off') ?? '').split(',').filter(Boolean),
       name: data ? pickHeaderIdentity(data.profiles, disabledAccounts).displayName : undefined,
       size: showcaseSize,
@@ -669,6 +682,7 @@ function ProfileContent() {
     const newAchievements: Record<string, Achievement[]> = {};
 
     for (const g of game.games) {
+      if (g.platform === 'epic') continue; // Fortnite stats have no achievements
       const playerId = g.accountId ?? filteredData.profiles.find(p => p.platform === g.platform)?.id;
       if (!playerId) continue;
 
@@ -990,6 +1004,16 @@ function ProfileContent() {
           </div>
         </div>
 
+        {filteredData.fortnite && (() => {
+          const enabledEpic = filteredData.profiles.filter(p => p.platform === 'epic' && filteredData.fortnite?.[p.id]);
+          if (enabledEpic.length === 0) return null;
+          return (
+            <div className="mb-8 space-y-4">
+              {enabledEpic.map(p => <FortniteCard key={p.id} stats={filteredData.fortnite![p.id]} />)}
+            </div>
+          );
+        })()}
+
         <div id="profile-tabs" role="tablist" aria-label="Profile sections" className="mb-6 flex items-center gap-2 border-b border-zinc-800 overflow-x-auto scroll-mt-24">
           <button
             type="button"
@@ -1058,6 +1082,7 @@ function ProfileContent() {
                   <option value="xbox">Xbox Only</option>
                   <option value="steam">Steam Only</option>
                   <option value="psn">PSN Only</option>
+                  <option value="epic">Epic / Fortnite Only</option>
                 </select>
               </div>
 
