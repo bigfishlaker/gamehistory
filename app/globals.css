@@ -1,0 +1,70 @@
+@import "tailwindcss";
+
+:root {
+  --background: #09090b;
+  --foreground: #fafafa;
+  --accent: #10b981;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-accent: var(--accent);
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}
+
+/*
+ * Design system: neutral near-black surfaces, 1px zinc borders, one accent (emerald)
+ * used only for state (checked, progress, focus). One primary button style per page.
+ */
+@layer components {
+  /* 44px tap targets on touch-sized screens, 40px from sm up. */
+  .btn {
+    @apply inline-flex min-h-11 items-center justify-center gap-2 whitespace-nowrap rounded-md px-4 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/70 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-10;
+  }
+  .btn-primary {
+    @apply bg-zinc-50 text-zinc-950 hover:bg-zinc-200 active:bg-zinc-300;
+  }
+  .btn-secondary {
+    @apply border border-zinc-800 bg-zinc-900 text-zinc-100 hover:border-zinc-700 hover:bg-zinc-800 active:bg-zinc-700;
+  }
+  .btn-ghost {
+    @apply text-zinc-400 hover:bg-zinc-900 hover:text-zinc-100 active:bg-zinc-800;
+  }
+  .skeleton {
+    @apply animate-pulse rounded-md bg-zinc-800/70 motion-reduce:animate-none;
+  }
+  .card {
+    @apply rounded-lg border border-zinc-800 bg-zinc-900/40;
+  }
+  .text-link {
+    @apply rounded-sm text-zinc-100 underline decoration-zinc-600 underline-offset-4 transition-colors hover:decoration-zinc-300 active:text-zinc-300;
+  }
+  .field {
+    @apply rounded-md border border-zinc-800 bg-zinc-900 text-zinc-100 placeholder-zinc-500 focus:border-zinc-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/40;
+  }
+}
+
+/* One consistent keyboard focus ring for every link/button/control that doesn't set its own. */
+:where(a, button, select, input, textarea, summary, [role="tab"], [role="switch"], [tabindex]):focus-visible {
+  outline: 2px solid rgb(16 185 129 / 0.8);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+:where(.btn, .field):focus-visible {
+  outline: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
