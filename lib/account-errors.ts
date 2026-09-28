@@ -42,7 +42,7 @@ export function describeAccountError(key: string, message: string): FriendlyAcco
     return {
       ...base,
       kind: 'busy',
-      title: 'Xbox is busy right now, showing your other platforms',
+      title: `${platform ? name : 'Xbox'} is busy right now, showing your other platforms`,
       detail: part === 'playtime'
         ? `Hours for ${account} aren't counted yet. Try again in a few minutes.`
         : `${account} couldn't be looked up this hour. Try again in a few minutes.`,

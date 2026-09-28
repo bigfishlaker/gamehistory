@@ -92,7 +92,8 @@ describe('PSNAdapter', () => {
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.error.code).toBe('AUTH_FAILED');
-        expect(result.error.message).toContain('NPSSO token may be invalid or expired');
+        expect(result.error.message).toBe('PlayStation lookups are temporarily unavailable. Please try again later.');
+        expect(result.error.message).not.toMatch(/NPSSO|ssocookie/i);
       }
     });
   });

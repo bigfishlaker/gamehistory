@@ -12,6 +12,19 @@ import {
   getUserTrophiesEarnedForTitle,
   type AuthTokensResponse,
 } from 'psn-api';
+import { createHash } from 'node:crypto';
+import { getStore } from '../store';
+import { reserveUpstream, PSN_BUSY_MESSAGE } from '../rate-limit';
+
+/** Shown to users whenever PSN auth is broken (expired NPSSO etc.). The real reason is logged server-side. */
+export const PSN_UNAVAILABLE_MESSAGE = 'PlayStation lookups are temporarily unavailable. Please try again later.';
+/** After a failed NPSSO sign-in, don't retry Sony for this long (every lookup would otherwise retry). */
+export const PSN_AUTH_FAILURE_TTL_SECONDS = 10 * 60;
+/** Budget units per operation (roughly the number of Sony API calls it makes). */
+export const PSN_COST = { auth: 2, refresh: 1, resolvePlayer: 2, gameLibrary: 3, achievements: 2 } as const;
+
+const authFailedKey = (npsso: string) =>
+  `psn-auth-failed:${createHash('sha256').update(npsso).digest('hex').slice(0, 12)}`;
 
 /** PSN returns http:// avatar URLs; the CSP (img-src https:) and mixed-content rules block them. */
 export function toHttps(url: string | undefined): string | undefined {
@@ -68,6 +81,34 @@ export class PSNAdapter implements PlatformAdapter {
     this.npsso = npsso;
   }
 
+  private unavailable(): ApiResult<never> {
+    return { success: false, error: { error: 'Authentication failed', code: 'AUTH_FAILED', message: PSN_UNAVAILABLE_MESSAGE } };
+  }
+
+  /** Reserve PSN budget units; returns a failure result when the hourly budget is used up. */
+  private async spend(cost: number): Promise<ApiResult<never> | null> {
+    const budget = await reserveUpstream('psn', cost);
+    return budget.allowed
+      ? null
+      : { success: false, error: { error: 'Busy', code: 'BUDGET_EXHAUSTED', message: PSN_BUSY_MESSAGE } };
+  }
+
+  private async authRecentlyFailed(): Promise<boolean> {
+    try {
+      return (await getStore().get(authFailedKey(this.npsso))) !== null;
+    } catch {
+      return false;
+    }
+  }
+
+  private async rememberAuthFailure(): Promise<void> {
+    try {
+      await getStore().set(authFailedKey(this.npsso), 1, PSN_AUTH_FAILURE_TTL_SECONDS);
+    } catch {
+      /* non-fatal */
+    }
+  }
+
   private async getValidAuth(): Promise<ApiResult<AuthTokensResponse>> {
     const cacheKey = `psn:${this.npsso.substring(0, 8)}`;
     const cached = tokenCache.get(cacheKey);
@@ -90,6 +131,8 @@ export class PSNAdapter implements PlatformAdapter {
 
     // Refresh tokens if we have a refresh token
     if (cached?.refreshToken) {
+      const busy = await this.spend(PSN_COST.refresh);
+      if (busy) return busy;
       try {
         const refreshed = await exchangeRefreshTokenForAuthTokens(cached.refreshToken);
         tokenCache.set(cacheKey, {
@@ -104,7 +147,10 @@ export class PSNAdapter implements PlatformAdapter {
       }
     }
 
-    // Full authentication flow
+    // Full authentication flow (skipped for a while after a failure, see PSN_AUTH_FAILURE_TTL_SECONDS)
+    if (await this.authRecentlyFailed()) return this.unavailable();
+    const busy = await this.spend(PSN_COST.auth);
+    if (busy) return busy;
     try {
       const accessCode = await exchangeNpssoForAccessCode(this.npsso);
       const tokens = await exchangeAccessCodeForAuthTokens(accessCode);
@@ -116,15 +162,15 @@ export class PSNAdapter implements PlatformAdapter {
       });
 
       return { success: true, data: tokens };
-    } catch {
-      return {
-        success: false,
-        error: {
-          error: 'Authentication failed',
-          code: 'AUTH_FAILED',
-          message: 'PSN authentication failed. NPSSO token may be invalid or expired. Get a new one from https://ca.account.sony.com/api/v1/ssocookie',
-        },
-      };
+    } catch (err) {
+      // Server-side only: users see the neutral PSN_UNAVAILABLE_MESSAGE.
+      console.error(
+        `[psn] NPSSO sign-in failed; PSN lookups paused for ${PSN_AUTH_FAILURE_TTL_SECONDS / 60} min. ` +
+          'The PSN_NPSSO token is probably invalid or expired: get a new one from https://ca.account.sony.com/api/v1/ssocookie. Reason:',
+        err instanceof Error ? err.message : String(err)
+      );
+      await this.rememberAuthFailure();
+      return this.unavailable();
     }
   }
 
@@ -133,6 +179,8 @@ export class PSNAdapter implements PlatformAdapter {
     if (!authResult.success) {
       return authResult;
     }
+    const busy = await this.spend(PSN_COST.resolvePlayer);
+    if (busy) return busy;
 
     try {
       // Try universal search first
@@ -208,6 +256,8 @@ export class PSNAdapter implements PlatformAdapter {
     if (!authResult.success) {
       return authResult;
     }
+    const busy = await this.spend(PSN_COST.gameLibrary);
+    if (busy) return busy;
 
     try {
       // Fetch played games for playtime and covers
@@ -314,6 +364,8 @@ export class PSNAdapter implements PlatformAdapter {
     if (!authResult.success) {
       return authResult;
     }
+    const busy = await this.spend(PSN_COST.achievements);
+    if (busy) return busy;
 
     try {
       // Get trophy groups for the title (using "all" for all trophies)

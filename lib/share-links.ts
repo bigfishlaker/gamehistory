@@ -11,8 +11,12 @@ import { SHOWCASE_SIZES } from './export/showcase-layout';
 
 export const SHARE_CODE_LENGTH = 8;
 export const SHARE_CODE_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
-/** Links are meant to be permanent; Redis needs a TTL in this store API, so use ~5 years. */
-export const SHARE_TTL_SECONDS = 5 * 365 * 24 * 3600;
+/** Links last a year (bounded so share spam can't fill Redis; noeviction policy). */
+export const SHARE_TTL_SECONDS = 365 * 24 * 3600;
+/** Global cap on NEW share links per UTC day (re-sharing an existing set reuses its code and is free). */
+export const SHARE_DAILY_CAP = 500;
+export const SHARE_DAILY_LIMIT_MESSAGE = 'GAMER.ID has made a lot of share links today. Please try again tomorrow, or copy the page link instead.';
+export const shareDailyKey = (now = Date.now()) => `share-daily:${new Date(now).toISOString().slice(0, 10)}`;
 export const MAX_SHARE_BODY_BYTES = 4096;
 
 export const shareKey = (code: string) => `share:${code}`;

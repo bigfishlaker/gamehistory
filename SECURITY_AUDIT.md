@@ -24,6 +24,22 @@ Status: HIGH/MEDIUM fixes implemented and verified 2026-09-27 (see Verified Stat
 
 Production note: without `UPSTASH_REDIS_REST_URL`/`TOKEN` (or `KV_REST_API_URL`/`TOKEN`) the store falls back to memory, so limits are per serverless instance. Configure Upstash (DEPLOY.md §5) before going public.
 
+## 🔒 Post-launch hardening (2026-09-27, live audit + fixes)
+
+A live audit of https://gamer-id.vercel.app found no secrets in the client bundles, correct security headers, no SSRF or open redirect, and working per-IP 429s. These hardening items were then implemented (tests: `test/hardening.test.ts`, `test/psn-hardening.test.ts`):
+
+| # | Item | Status | Where |
+|---|---|---|---|
+| H1 | Store (Upstash) outage no longer disables protection. Per-IP limits fall back to a per-process in-memory limiter (same limits, per instance) instead of allowing everything. The OpenXBL budget **fails closed** (Xbox shows "busy"). Share creation fails closed (503). | ✅ Fixed | `lib/rate-limit.ts` (`rateLimit`, `reserveOpenXblRequest`), `app/api/share/route.ts` |
+| H2 | Share links: global cap of **500 new links per UTC day** (re-sharing an existing set reuses its code and isn't counted), TTL cut from 5 years to **1 year**. This bounds Redis growth (the DB is 64 MB with `noeviction`). | ✅ Fixed | `lib/share-links.ts` (`SHARE_DAILY_CAP`, `SHARE_TTL_SECONDS`), `app/api/share/route.ts` |
+| H3 | Global hourly upstream budgets: **Steam 1,500 calls/h** (Steam allows ~4,100/h), **PSN 600 units/h** (about 120 uncached lookups; a lookup costs ~5 units, see `PSN_COST`). Cached hits never reach the adapters, so they're free. Exhaustion returns a friendly per-platform "busy" message (HTTP 503 on `/api/achievements`). If the store errors, a per-process budget with the same cap applies. | ✅ Fixed | `lib/rate-limit.ts` (`reserveUpstream`, `UPSTREAM_HOURLY_LIMITS`), `lib/adapters/steam-adapter.ts`, `lib/adapters/psn-adapter.ts` |
+| H4 | Traffic counter key growth: only known routes are counted by name (`/`, `/p`, `/dashboard`, `/help`, `/privacy`, `/gcr`, `/u/:code`). Everything else counts as `/other`. Referrer hosts are capped at **50 distinct per day** (later new hosts count as `other`), using one atomic Lua `EVAL`. | ✅ Fixed | `lib/traffic.ts` (`normalizeTrafficPath`, `REFERRER_INCR_SCRIPT`) |
+| H5 | PSN token expiry: users see a neutral "PlayStation lookups are temporarily unavailable" message. The real reason (expired/invalid `PSN_NPSSO`) is logged server-side with `console.error`. A failed sign-in is cached for **10 minutes** (`psn-auth-failed:<sha256 prefix>` in the store) so Sony isn't retried on every lookup. A missing `PSN_NPSSO` also shows the neutral message. | ✅ Fixed | `lib/adapters/psn-adapter.ts`, `app/api/profile/route.ts` |
+
+Unchanged on purpose: per-IP limits (profile 120/h, achievements 120/h, share 20/h, image 600/10 min), OpenXBL 150/h with 20 in reserve, and the owner's IP is not limited more than anyone else.
+
+Open decisions for the owner: `KV_*`/`REDIS_URL` are targeted at production+preview+development (previews share the prod Redis) and are not Sensitive-type; `.env.production.local` on the dev PC holds the live Upstash write token; CSP still allows `script-src 'unsafe-inline'`. PSN_NPSSO expires roughly every 2 months: check the Vercel logs for `[psn] NPSSO sign-in failed` and rotate it.
+
 ---
 
 ## Executive Summary

@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { getStore } from './store';
+import { getStore, MemoryStore } from './store';
 
 /* ------------------------------------------------------------------ *
  * Client IP
@@ -44,6 +44,13 @@ export interface RateLimitResult {
   retryAfterSeconds: number;
 }
 
+/**
+ * Per-process fallback used only when the shared store errors. Limits then apply
+ * per serverless instance instead of globally, which is looser than normal but
+ * never "unlimited" (the old behaviour was to let every request through).
+ */
+const fallbackLimiter = ((globalThis as unknown as { __ghFallbackLimiter?: MemoryStore }).__ghFallbackLimiter ??= new MemoryStore());
+
 export async function rateLimit(
   req: Pick<NextRequest, 'headers'>,
   bucket: RouteBucket,
@@ -51,19 +58,24 @@ export async function rateLimit(
 ): Promise<RateLimitResult> {
   const window = Math.floor(Date.now() / 1000 / rule.windowSeconds);
   const key = `rl:${bucket}:${getClientIp(req)}:${window}`;
+  let counted: { count: number; ttlSeconds: number };
   try {
-    const { count, ttlSeconds } = await getStore().incr(key, rule.windowSeconds);
-    return {
-      allowed: count <= rule.limit,
-      limit: rule.limit,
-      remaining: Math.max(0, rule.limit - count),
-      retryAfterSeconds: ttlSeconds,
-    };
+    counted = await getStore().incr(key, rule.windowSeconds);
   } catch (err) {
-    // A store outage must not take the site down; fail open but log it.
-    console.warn('[rate-limit] store error, allowing request:', err instanceof Error ? err.message : err);
-    return { allowed: true, limit: rule.limit, remaining: rule.limit, retryAfterSeconds: 0 };
+    console.warn('[rate-limit] store error, using per-process fallback limiter:', err instanceof Error ? err.message : err);
+    counted = await fallbackLimiter.incr(key, rule.windowSeconds);
   }
+  return {
+    allowed: counted.count <= rule.limit,
+    limit: rule.limit,
+    remaining: Math.max(0, rule.limit - counted.count),
+    retryAfterSeconds: counted.ttlSeconds,
+  };
+}
+
+/** Tests only: clear the per-process fallback limiter. */
+export function resetFallbackLimiterForTests(): void {
+  fallbackLimiter.clear();
 }
 
 export function tooManyRequests(result: RateLimitResult): NextResponse {
@@ -127,8 +139,10 @@ export async function reserveOpenXblRequest(): Promise<BudgetStatus> {
     }
     return { allowed: true, used: count, remaining: cap - count, upstreamRemaining: upstream ?? undefined };
   } catch (err) {
-    console.warn('[budget] store error, allowing request:', err instanceof Error ? err.message : err);
-    return { allowed: true, used: 0, remaining: 0 };
+    // Fail closed: without the shared counter we can't tell how much of the hourly
+    // OpenXBL quota is left, and draining it would break Xbox for everyone.
+    console.warn('[budget] store error, refusing OpenXBL request (fail closed):', err instanceof Error ? err.message : err);
+    return { allowed: false, used: 0, remaining: 0 };
   }
 }
 
@@ -150,6 +164,56 @@ export async function getOpenXblBudget(): Promise<BudgetStatus> {
   const cap = OPENXBL_HOURLY_LIMIT - OPENXBL_RESERVE;
   const upstreamOk = typeof upstream !== 'number' || upstream > OPENXBL_RESERVE;
   return { allowed: used < cap && upstreamOk, used, remaining: Math.max(0, cap - used), upstreamRemaining: upstream ?? undefined };
+}
+
+/* ------------------------------------------------------------------ *
+ * Global hourly budgets for Steam and PSN upstream calls
+ * ------------------------------------------------------------------ */
+
+/**
+ * Steam Web API allows ~100,000 calls/day (~4,100/hour); a profile load costs 2-3
+ * calls, so 1,500/hour (~500 uncached lookups) leaves plenty of headroom.
+ * PSN runs on the owner's own account, so keep it modest: a lookup costs ~5
+ * units (see PSN_COST in the adapter), so 600/hour is ~120 uncached lookups.
+ * Cached profile/achievement hits never reach the adapters, so they cost nothing.
+ */
+export const UPSTREAM_HOURLY_LIMITS = { steam: 1500, psn: 600 } as const;
+export type UpstreamName = keyof typeof UPSTREAM_HOURLY_LIMITS;
+
+export const STEAM_BUSY_MESSAGE =
+  'GAMER.ID is busy right now: the hourly Steam lookup limit is used up. Please try again in a few minutes.';
+export const PSN_BUSY_MESSAGE =
+  'GAMER.ID is busy right now: the hourly PlayStation lookup limit is used up. Please try again in a few minutes.';
+export const UPSTREAM_BUSY_MESSAGES: Record<UpstreamName, string> = { steam: STEAM_BUSY_MESSAGE, psn: PSN_BUSY_MESSAGE };
+
+const fallbackBudgets = ((globalThis as unknown as { __ghFallbackBudgets?: MemoryStore }).__ghFallbackBudgets ??= new MemoryStore());
+
+/**
+ * Reserve `cost` units of an upstream's hourly budget. Shared across instances via
+ * the store; if the store errors, a per-process counter with the same cap is used
+ * (so Steam/PSN keep working during a store outage, but never unbounded).
+ */
+export async function reserveUpstream(name: UpstreamName, cost = 1): Promise<{ allowed: boolean; used: number; limit: number }> {
+  const limit = UPSTREAM_HOURLY_LIMITS[name];
+  const key = `budget:${name}:${Math.floor(Date.now() / 3_600_000)}`;
+  const ttl = 3600 - (Math.floor(Date.now() / 1000) % 3600) + 60;
+  let count: number;
+  try {
+    ({ count } = await getStore().incr(key, ttl, cost));
+  } catch (err) {
+    console.warn(`[budget] store error, using per-process ${name} budget:`, err instanceof Error ? err.message : err);
+    ({ count } = await fallbackBudgets.incr(key, ttl, cost));
+  }
+  if (count > limit) {
+    console.warn(`[budget] ${name} hourly budget exhausted (${count - cost}/${limit})`);
+    return { allowed: false, used: count - cost, limit };
+  }
+  return { allowed: true, used: count, limit };
+}
+
+/** Tests only. */
+export function resetFallbackBudgetsForTests(): void {
+  fallbackBudgets.clear();
 }
 
 export function busyResponse(): NextResponse {

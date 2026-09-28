@@ -3,10 +3,13 @@ import { enforceRateLimit } from '@/lib/rate-limit';
 import { getStore } from '@/lib/store';
 import {
   MAX_SHARE_BODY_BYTES,
+  SHARE_DAILY_CAP,
+  SHARE_DAILY_LIMIT_MESSAGE,
   SHARE_TTL_SECONDS,
   canonicalShareKey,
   generateShareCode,
   isValidShareCode,
+  shareDailyKey,
   shareKey,
   shareSetKey,
   validateShareInput,
@@ -45,6 +48,14 @@ export async function POST(request: NextRequest) {
     const existing = await store.get<string>(shareSetKey(canonical));
     if (isValidShareCode(existing) && (await store.get(shareKey(existing)))) {
       return NextResponse.json({ code: existing, url: `${origin}/u/${existing}` });
+    }
+
+    // Global daily cap on new links. Store errors land in the catch below, so share
+    // creation fails closed (503) rather than writing unmetered.
+    const { count: createdToday } = await store.incr(shareDailyKey(), 2 * 24 * 3600);
+    if (createdToday > SHARE_DAILY_CAP) {
+      console.warn(`[share] daily cap reached (${SHARE_DAILY_CAP})`);
+      return NextResponse.json({ error: SHARE_DAILY_LIMIT_MESSAGE }, { status: 429, headers: { 'Retry-After': '3600' } });
     }
 
     for (let attempt = 0; attempt < 5; attempt++) {

@@ -29,9 +29,10 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ achievements: reviveAchievementArrayDates(cached) });
   }
 
-  const { achievements, error } = await dedupe(cacheKey, async () => {
+  const { achievements, error, busy } = await dedupe(cacheKey, async () => {
     let achievements: Achievement[] = [];
     let error: string | null = null;
+    let busy = false;
 
     if (platform === 'xbox') {
       const xbox = createXboxAdapter();
@@ -43,7 +44,8 @@ export async function GET(request: NextRequest) {
           achievements = result.data;
           await cache.set(cacheKey, achievements, 24 * 60 * 60);
         } else {
-          error = result.error.code === 'BUDGET_EXHAUSTED' ? BUSY_MESSAGE : userSafeError(result.error.message || result.error.error);
+          error = result.error.code === 'BUDGET_EXHAUSTED' ? (result.error.message || BUSY_MESSAGE) : userSafeError(result.error.message || result.error.error);
+          busy = result.error.code === 'BUDGET_EXHAUSTED';
         }
       }
     } else if (platform === 'steam') {
@@ -56,18 +58,19 @@ export async function GET(request: NextRequest) {
           achievements = result.data;
           await cache.set(cacheKey, achievements, 24 * 60 * 60);
         } else {
-          error = result.error.code === 'BUDGET_EXHAUSTED' ? BUSY_MESSAGE : userSafeError(result.error.message || result.error.error);
+          error = result.error.code === 'BUDGET_EXHAUSTED' ? (result.error.message || BUSY_MESSAGE) : userSafeError(result.error.message || result.error.error);
+          busy = result.error.code === 'BUDGET_EXHAUSTED';
         }
       }
     } else {
       error = `Unsupported platform: ${platform}`;
     }
 
-    return { achievements, error };
+    return { achievements, error, busy };
   });
 
   if (error) {
-    return NextResponse.json({ error }, { status: error === BUSY_MESSAGE ? 503 : 400 });
+    return NextResponse.json(busy ? { error, busy: true } : { error }, { status: busy ? 503 : 400 });
   }
 
   return NextResponse.json({ achievements });

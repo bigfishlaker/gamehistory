@@ -62,6 +62,7 @@ export class MemoryStore implements KVStore {
     const e = this.live(key);
     if (!e) {
       this.map.set(key, { value: by, expiresAt: Date.now() + ttlSeconds * 1000 });
+      if (this.map.size > 5000) this.sweep();
       return { count: by, ttlSeconds };
     }
     e.value = Number(e.value) + by;

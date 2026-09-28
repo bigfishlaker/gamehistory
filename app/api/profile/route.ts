@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createXboxAdapter, createSteamAdapter, createPSNAdapter } from '@/lib/adapters';
+import { PSN_UNAVAILABLE_MESSAGE } from '@/lib/adapters/psn-adapter';
 import { getCache, PROFILE_CACHE_TTL_SECONDS } from '@/lib/cache';
 import { reviveGameArrayDates } from '@/lib/utils/date-reviver';
 import { summarizePlaytime } from '@/lib/utils/playtime';
@@ -188,7 +189,8 @@ export async function GET(request: NextRequest) {
   };
 
   const errText = (e: { message?: string; error: string; code?: string }) =>
-    e.code === 'BUDGET_EXHAUSTED' ? BUSY_MESSAGE : userSafeError(e.message || e.error);
+    e.code === 'BUDGET_EXHAUSTED' ? (e.message || BUSY_MESSAGE) : userSafeError(e.message || e.error);
+  const isBusy = (e: { code?: string }) => e.code === 'BUDGET_EXHAUSTED';
 
   // Each account load is cached (~1h, shared store) and concurrent identical
   // loads are collapsed into one upstream fetch (dedupe).
@@ -240,10 +242,10 @@ export async function GET(request: NextRequest) {
       const steam = createSteamAdapter();
       if (!steam) return { games: [], errors: { [`steam-${steamId}`]: 'Steam API key not configured' } };
       const profileResult = await steam.resolvePlayer(steamId);
-      if (!profileResult.success) return { games: [], errors: { [`steam-${steamId}`]: errText(profileResult.error) } };
+      if (!profileResult.success) return { games: [], errors: { [`steam-${steamId}`]: errText(profileResult.error) }, busy: isBusy(profileResult.error) };
       const gamesResult = await steam.getGameLibrary(profileResult.data.id);
       if (!gamesResult.success) {
-        return { profile: profileResult.data, games: [], errors: { [`steam-${steamId}-games`]: errText(gamesResult.error) } };
+        return { profile: profileResult.data, games: [], errors: { [`steam-${steamId}-games`]: errText(gamesResult.error) }, busy: isBusy(gamesResult.error) };
       }
       await cache.set(cacheKey, { profile: profileResult.data, games: gamesResult.data }, PROFILE_CACHE_TTL_SECONDS);
       return { profile: profileResult.data, games: gamesResult.data, errors: {} };
@@ -257,13 +259,14 @@ export async function GET(request: NextRequest) {
       if (cached) return { profile: cached.profile, games: reviveGameArrayDates(cached.games), errors: {} };
       const psn = createPSNAdapter();
       if (!psn) {
-        return { games: [], errors: { [`psn-${onlineId}`]: 'PSN NPSSO token not configured. Get it from https://ca.account.sony.com/api/v1/ssocookie' } };
+        console.error('[psn] PSN_NPSSO is not configured; PSN lookups are disabled');
+        return { games: [], errors: { [`psn-${onlineId}`]: PSN_UNAVAILABLE_MESSAGE } };
       }
       const profileResult = await psn.resolvePlayer(onlineId);
-      if (!profileResult.success) return { games: [], errors: { [`psn-${onlineId}`]: errText(profileResult.error) } };
+      if (!profileResult.success) return { games: [], errors: { [`psn-${onlineId}`]: errText(profileResult.error) }, busy: isBusy(profileResult.error) };
       const gamesResult = await psn.getGameLibrary(profileResult.data.id);
       if (!gamesResult.success) {
-        return { profile: profileResult.data, games: [], errors: { [`psn-${onlineId}-games`]: errText(gamesResult.error) } };
+        return { profile: profileResult.data, games: [], errors: { [`psn-${onlineId}-games`]: errText(gamesResult.error) }, busy: isBusy(gamesResult.error) };
       }
       await cache.set(cacheKey, { profile: profileResult.data, games: gamesResult.data }, PROFILE_CACHE_TTL_SECONDS);
       return { profile: profileResult.data, games: gamesResult.data, errors: {} };

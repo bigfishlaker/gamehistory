@@ -5,8 +5,8 @@
  *   traffic:v1:<date>:views   page views (full page loads)
  *   traffic:v1:<date>:uv      unique visitors (HyperLogLog of a salted, daily-rotated
  *                             SHA-256 of IP + user agent; raw IPs are never stored)
- *   traffic:v1:<date>:paths   hash path -> views
- *   traffic:v1:<date>:refs    hash external referrer host -> views
+ *   traffic:v1:<date>:paths   hash path -> views (known routes only; the rest is "/other")
+ *   traffic:v1:<date>:refs    hash external referrer host -> views (first 50 hosts; then "other")
  *
  * Skipped: the owner (cookie gamerid_owner=1 or an IP in TRAFFIC_EXCLUDE_IPS), bots,
  * API/asset/prefetch requests, non-GET requests.
@@ -53,11 +53,31 @@ export function shouldCount(req: TrafficRequest, env: NodeJS.ProcessEnv = proces
   return true;
 }
 
-/** Collapse unbounded paths (short links) so the per-path hash stays small. */
+/** Page routes tracked by name; anything else (404s, probes) is counted as "/other". */
+export const KNOWN_TRAFFIC_PATHS = ['/', '/p', '/dashboard', '/help', '/privacy', '/gcr'] as const;
+const KNOWN_PATH_SET = new Set<string>(KNOWN_TRAFFIC_PATHS);
+
+/** Fixed set of hash fields, so random URLs can't grow the per-day paths hash. */
 export function normalizeTrafficPath(pathname: string): string {
-  if (pathname.startsWith('/u/')) return '/u/:code';
-  return pathname.length > 64 ? pathname.slice(0, 64) : pathname || '/';
+  const p = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname || '/';
+  if (/^\/u\/[^/]+$/.test(p)) return '/u/:code';
+  return KNOWN_PATH_SET.has(p) ? p : '/other';
 }
+
+/** Distinct referrer hosts kept per day; later new hosts are counted under "other". */
+export const MAX_REFERRERS_PER_DAY = 50;
+
+/**
+ * HINCRBY the referrer, or "other" once the day's hash already holds MAX distinct
+ * hosts and this one isn't among them. One round trip, atomic.
+ * KEYS[1] = refs hash, ARGV = [host, cap, ttlSeconds]
+ */
+export const REFERRER_INCR_SCRIPT = `
+local f = ARGV[1]
+if redis.call('HEXISTS', KEYS[1], f) == 0 and redis.call('HLEN', KEYS[1]) >= tonumber(ARGV[2]) then f = 'other' end
+redis.call('HINCRBY', KEYS[1], f, 1)
+redis.call('EXPIRE', KEYS[1], tonumber(ARGV[3]))
+return f`;
 
 export function referrerHost(referer: string | null, ownHost: string): string | null {
   if (!referer) return null;
@@ -90,10 +110,10 @@ function getRedis(): Redis | null {
 }
 
 /** Record one page view. Never throws (analytics must not break pages). */
-export async function recordPageView(req: TrafficRequest): Promise<boolean> {
+export async function recordPageView(req: TrafficRequest, client?: Redis | null): Promise<boolean> {
   try {
     if (!shouldCount(req)) return false;
-    const r = getRedis();
+    const r = client === undefined ? getRedis() : client;
     if (!r) return false;
     const date = trafficDate();
     const salt = process.env.TRAFFIC_SALT || upstashConfigFromEnv()?.token || 'gamer-id';
@@ -108,8 +128,7 @@ export async function recordPageView(req: TrafficRequest): Promise<boolean> {
     p.hincrby(`${k}:paths`, normalizeTrafficPath(req.pathname), 1);
     p.expire(`${k}:paths`, TRAFFIC_TTL_SECONDS);
     if (ref) {
-      p.hincrby(`${k}:refs`, ref, 1);
-      p.expire(`${k}:refs`, TRAFFIC_TTL_SECONDS);
+      p.eval(REFERRER_INCR_SCRIPT, [`${k}:refs`], [ref, String(MAX_REFERRERS_PER_DAY), String(TRAFFIC_TTL_SECONDS)]);
     }
     await p.exec();
     return true;

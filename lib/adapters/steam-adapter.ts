@@ -1,4 +1,5 @@
 import type { PlatformAdapter } from './platform-adapter';
+import { reserveUpstream, STEAM_BUSY_MESSAGE } from '../rate-limit';
 import { COD_HQ_STEAM_APPID, COD_HQ_TITLE } from '../utils/title-aliases';
 import type { PlayerProfile, Game, Achievement, ApiResult } from '../types';
 import { normalizeSteamInput, STEAM_NOT_FOUND_MESSAGE } from '../utils/steam-parser';
@@ -80,6 +81,11 @@ export class SteamAdapter implements PlatformAdapter {
   }
 
   private async fetch<T>(url: string): Promise<ApiResult<T>> {
+    // Global hourly Steam budget (lib/rate-limit.ts), checked before every upstream call.
+    const budget = await reserveUpstream('steam');
+    if (!budget.allowed) {
+      return { success: false, error: { error: 'Busy', code: 'BUDGET_EXHAUSTED', message: STEAM_BUSY_MESSAGE } };
+    }
     try {
       const response = await fetch(url);
       
@@ -125,6 +131,7 @@ export class SteamAdapter implements PlatformAdapter {
         vanityurl: input.value,
       });
       const vanityResult = await this.fetch<SteamVanityResponse>(vanityUrl);
+      if (!vanityResult.success && vanityResult.error.code === 'BUDGET_EXHAUSTED') return vanityResult;
       const resolved = vanityResult.success ? vanityResult.data.response : undefined;
 
       if (!resolved || resolved.success !== 1 || !resolved.steamid || !/^\d{17}$/.test(resolved.steamid)) {
