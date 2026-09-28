@@ -6,7 +6,7 @@ import type { NextConfig } from "next";
 const isDev = process.env.NODE_ENV !== 'production';
 
 const nextConfig: NextConfig = {
-  // A stray package.json/package-lock.json in C:\Users\bigfi made Turbopack warn and
+  // A stray package.json/package-lock.json in the home directory made Turbopack warn and
   // consider inferring the home directory as the workspace root. Pin it to this project.
   turbopack: {
     root: path.resolve(__dirname),
