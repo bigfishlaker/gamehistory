@@ -26,6 +26,13 @@ export const STEAM_PRIVACY_STEPS = [
   'Wait a minute, then reload this page',
 ];
 
+export const XBOX_PRIVACY_STEPS = [
+  'On your Xbox, open Settings > Account > Privacy & online safety',
+  'Choose Xbox privacy > View details & customize > Game & app content',
+  'Set "Others can see your game and app history" to Everybody',
+  'Wait a few minutes, then reload this page',
+];
+
 export function parseErrorKey(key: string): { platform: Platform | null; account: string; part: 'games' | 'playtime' | null } {
   const m = key.match(/^(xbox|steam|psn|epic)-(.*?)(?:-(games|playtime))?$/);
   if (!m) return { platform: null, account: key, part: null };
@@ -55,6 +62,15 @@ export function describeAccountError(key: string, message: string): FriendlyAcco
       title: 'This Steam profile is private',
       detail: `Steam doesn't share the games for ${account} until its game details are public.`,
       steps: STEAM_PRIVACY_STEPS,
+    };
+  }
+  if (platform === 'xbox' && /game history is private/i.test(msg)) {
+    return {
+      ...base,
+      kind: 'private',
+      title: 'This Xbox game history is private',
+      detail: `Xbox doesn't share the games for ${account} until their game history is visible to everybody.`,
+      steps: XBOX_PRIVACY_STEPS,
     };
   }
   if (platform === 'epic' && /private/i.test(msg)) {

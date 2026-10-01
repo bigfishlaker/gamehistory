@@ -24,9 +24,35 @@ interface OpenXBLRateLimitContent {
   limitType: string;
 }
 
+/** Where a player makes their Xbox game history visible to everyone. */
+export const XBOX_PRIVACY_PATH =
+  'Settings > Account > Privacy & online safety > Xbox privacy > View details & customize > Game & app content: Everybody';
+
+/**
+ * Xbox title history does not fail with 403 when a player hides their game history:
+ * it answers 200 with `titles: []` (verified 2026-10-01 for "nF Colors", gamerscore 45,
+ * while the same endpoint returned 1000 titles for Stallion83). A profile with
+ * gamerscore > 0 and no titles is therefore hidden; with 0/unknown gamerscore it is
+ * either hidden or genuinely empty.
+ */
+export function xboxEmptyHistoryMessage(gamerscore?: number): string {
+  if (typeof gamerscore === 'number' && gamerscore > 0) {
+    return `This player's Xbox game history is private — ${XBOX_PRIVACY_PATH}.`;
+  }
+  return `No Xbox games are visible for this player. If they have played games, their Xbox game history is private — ${XBOX_PRIVACY_PATH}.`;
+}
+
+function parseGamerscore(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+
 interface OpenXBLSearchResult {
   xuid?: string;
   gamertag?: string;
+  /** /v2/search people entries carry gamerscore as a string. */
+  gamerScore?: string;
   profileUsers?: Array<{
     id: string;
     settings: Array<{
@@ -258,6 +284,7 @@ export class XboxAdapter implements PlatformAdapter {
     let xuid: string | undefined;
     let displayName = gamertag;
     let avatarUrl: string | undefined;
+    let gamerscore: number | undefined;
     
     if (!searchResult.success) {
       const fuzzyResult = await this.fetch<{ people: OpenXBLSearchResult[] }>(`/v2/search/${encodeURIComponent(gamertag)}`);
@@ -278,6 +305,7 @@ export class XboxAdapter implements PlatformAdapter {
       }
 
       xuid = firstMatch.xuid;
+      gamerscore = parseGamerscore(firstMatch.gamerScore);
     } else {
       xuid = searchResult.data.xuid ?? searchResult.data.profileUsers?.[0]?.id;
       
@@ -285,6 +313,7 @@ export class XboxAdapter implements PlatformAdapter {
         const user = searchResult.data.profileUsers[0];
         displayName = user.settings?.find(s => s.id === 'Gamertag')?.value || gamertag;
         avatarUrl = normalizeXboxAvatarUrl(user.settings?.find(s => s.id === 'GameDisplayPicRaw')?.value);
+        gamerscore = parseGamerscore(user.settings?.find(s => s.id === 'Gamerscore')?.value);
       }
     }
 
@@ -305,6 +334,7 @@ export class XboxAdapter implements PlatformAdapter {
         displayName,
         avatarUrl,
         platform: 'xbox',
+        ...(gamerscore !== undefined ? { gamerscore } : {}),
       },
     };
   }

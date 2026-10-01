@@ -11,6 +11,8 @@ export interface PlayerProfile {
   gamesWithPlaytime?: number;
   /** Sum of known playtime; undefined when the account has no playtime data at all. */
   totalPlaytimeMinutes?: number;
+  /** Xbox only: public gamerscore from the profile lookup (used to tell a hidden game history from an empty one). */
+  gamerscore?: number;
 }
 
 export interface Game {

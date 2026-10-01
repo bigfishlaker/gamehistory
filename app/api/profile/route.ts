@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createXboxAdapter, createSteamAdapter, createPSNAdapter, createFortniteAdapter } from '@/lib/adapters';
 import { FORTNITE_GAME_ID, FORTNITE_GAME_TITLE, normalizeEpicInput, validateEpicName, type FortniteStats } from '@/lib/fortnite';
 import { PSN_UNAVAILABLE_MESSAGE } from '@/lib/adapters/psn-adapter';
-import { getCache, PROFILE_CACHE_TTL_SECONDS } from '@/lib/cache';
+import { xboxEmptyHistoryMessage } from '@/lib/adapters/xbox-adapter';
+import { getCache, PROFILE_CACHE_TTL_SECONDS, XBOX_EMPTY_HISTORY_CACHE_TTL_SECONDS } from '@/lib/cache';
 import { reviveGameArrayDates } from '@/lib/utils/date-reviver';
 import { summarizePlaytime } from '@/lib/utils/playtime';
 import { filterNonGames } from '@/lib/utils/non-game';
@@ -221,8 +222,16 @@ export async function GET(request: NextRequest) {
   const loadXbox = (gamertag: string) => {
     const cacheKey = `xbox:profile:v2:${gamertag.toLowerCase()}`;
     return dedupe<AccountLoad>(cacheKey, async () => {
+      const emptyHistory = (profile: PlayerProfile): AccountLoad => ({
+        profile, games: [],
+        errors: { [`xbox-${gamertag}-games`]: xboxEmptyHistoryMessage(profile.gamerscore) },
+      });
       const cached = await cache.get<{ profile: PlayerProfile; games: Game[] }>(cacheKey);
-      if (cached) return { profile: cached.profile, games: reviveGameArrayDates(cached.games), errors: {} };
+      if (cached) {
+        // An empty title history is never shown as a silent "0 games" (includes entries cached before this check).
+        if (!cached.games?.length) return emptyHistory(cached.profile);
+        return { profile: cached.profile, games: reviveGameArrayDates(cached.games), errors: {} };
+      }
       const xbox = createXboxAdapter();
       if (!xbox) return { games: [], errors: { [`xbox-${gamertag}`]: 'Xbox API key not configured' } };
 
@@ -239,6 +248,11 @@ export async function GET(request: NextRequest) {
         };
       }
       let xboxGames = gamesResult.data;
+      if (xboxGames.length === 0) {
+        // Xbox answers 200 + empty titles (not 403) when game history is hidden.
+        await cache.set(cacheKey, { profile: profileResult.data, games: [] }, XBOX_EMPTY_HISTORY_CACHE_TTL_SECONDS);
+        return emptyHistory(profileResult.data);
+      }
       const playtimeResult = await xbox.getTitlePlaytimes(profileResult.data.id, xboxGames.map(g => g.id));
       if (!playtimeResult.success) {
         const why = playtimeResult.error.code === 'BUDGET_EXHAUSTED'

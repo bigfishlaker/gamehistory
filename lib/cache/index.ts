@@ -40,3 +40,10 @@ export function getCache(): Cache {
 
 /** Profile responses (library + playtime) are cached for about an hour. */
 export const PROFILE_CACHE_TTL_SECONDS = 60 * 60;
+
+/**
+ * An Xbox account whose title history comes back empty (usually a hidden game history)
+ * is cached briefly, so repeats don't spend OpenXBL quota but a player who just made
+ * their history public isn't stuck behind the full profile TTL.
+ */
+export const XBOX_EMPTY_HISTORY_CACHE_TTL_SECONDS = 10 * 60;
