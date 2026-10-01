@@ -84,6 +84,18 @@ export function describeAccountError(key: string, message: string): FriendlyAcco
   if (/private/i.test(msg)) {
     return { ...base, kind: 'private', title: `This ${name} profile is private`, detail: `${account}: ${msg}` };
   }
+  if (platform === 'xbox' && /several xbox accounts are named/i.test(msg)) {
+    return { ...base, kind: 'not-found', title: 'Several Xbox accounts use this gamertag', detail: msg };
+  }
+  if (platform === 'xbox' && /not found/i.test(msg)) {
+    const hint = msg.match(/Did you mean (.+)\?$/)?.[1];
+    return {
+      ...base,
+      kind: 'not-found',
+      title: /XUID/.test(msg) ? 'XUID not found' : 'Gamertag not found',
+      detail: `We couldn't find "${account}". Check the spelling${hint ? ` (did you mean ${hint}?)` : ''}, add the #number for a suffixed gamertag, or enter the XUID.`,
+    };
+  }
   if (/not found|no player|could not find|couldn't find/i.test(msg)) {
     const what = platform === 'xbox' ? 'Gamertag' : platform === 'psn' ? 'PSN Online ID' : platform === 'epic' ? 'Epic account' : 'Steam profile';
     return {

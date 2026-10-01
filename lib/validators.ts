@@ -8,6 +8,17 @@ export interface ValidationResult {
   error?: string;
 }
 
+/** Classic/modern gamertag without suffix: 1-15 letters, digits and spaces. */
+export const XBOX_GAMERTAG_RE = /^[a-zA-Z0-9\s]{1,15}$/;
+/** Modern gamertag with its #suffix, e.g. "nF Colors#1234" (several accounts can share the name part). */
+export const XBOX_SUFFIXED_GAMERTAG_RE = /^[a-zA-Z0-9 ]{1,15}#\d{1,5}$/;
+/** A 16-digit XUID. Gamertags can't be all digits, so this never collides with a gamertag. */
+export const XBOX_XUID_RE = /^\d{16}$/;
+
+export function isXboxIdentifier(value: string): boolean {
+  return XBOX_XUID_RE.test(value) || XBOX_SUFFIXED_GAMERTAG_RE.test(value) || XBOX_GAMERTAG_RE.test(value);
+}
+
 export function validateGamertag(gamertag: string): ValidationResult {
   if (!gamertag || typeof gamertag !== 'string') {
     return { valid: false, error: 'Gamertag is required' };
@@ -23,9 +34,9 @@ export function validateGamertag(gamertag: string): ValidationResult {
     return { valid: false, error: `Gamertag too long (max ${MAX_INPUT_LENGTH} characters)` };
   }
 
-  // Xbox gamertags: 1-15 characters, alphanumeric and spaces
-  if (!/^[a-zA-Z0-9\s]{1,15}$/.test(trimmed)) {
-    return { valid: false, error: 'Invalid gamertag format (1-15 alphanumeric characters and spaces)' };
+  // Gamertag (1-15 letters/digits/spaces), gamertag#suffix, or a 16-digit XUID
+  if (!isXboxIdentifier(trimmed)) {
+    return { valid: false, error: 'Invalid gamertag format (1-15 letters, digits and spaces, optionally with a #suffix, or a 16-digit XUID)' };
   }
 
   return { valid: true };

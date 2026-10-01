@@ -3,6 +3,7 @@ import type { PlayerProfile, Game, Achievement, ApiResult, RateLimitInfo } from 
 import { normalizeXboxImageUrl, normalizeXboxAvatarUrl } from '../utils/xbox-images';
 import { userSafeError } from '../utils/safe-error';
 import { reserveOpenXblRequest, recordOpenXblRemaining, BUSY_MESSAGE } from '../rate-limit';
+import { XBOX_XUID_RE } from '../validators';
 
 interface OpenXBLWrappedResponse<T> {
   content: T | string;
@@ -48,11 +49,69 @@ function parseGamerscore(value: unknown): number | undefined {
   return Number.isFinite(n) && n >= 0 ? n : undefined;
 }
 
-interface OpenXBLSearchResult {
+function withGamerscore(gamerscore: number | undefined): { gamerscore?: number } {
+  return gamerscore !== undefined ? { gamerscore } : {};
+}
+
+function notFound(message: string): ApiResult<PlayerProfile> {
+  return { success: false, error: { error: 'Not found', code: 'PLAYER_NOT_FOUND', message } };
+}
+
+const normName = (s?: string | null) => (s ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+const squashName = (s?: string | null) => normName(s).replace(/ /g, '');
+
+/** "Name#1234" for suffixed modern gamertags, otherwise the gamertag. */
+function uniqueName(p: OpenXBLSearchResult): string {
+  if (p.uniqueModernGamertag) return p.uniqueModernGamertag;
+  if (p.modernGamertag) return p.modernGamertagSuffix ? `${p.modernGamertag}#${p.modernGamertagSuffix}` : p.modernGamertag;
+  return p.gamertag ?? '';
+}
+
+function profileFromPerson(p: OpenXBLSearchResult, fallbackName: string): PlayerProfile {
+  return {
+    id: p.xuid!,
+    displayName: uniqueName(p) || p.gamertag || fallbackName,
+    avatarUrl: normalizeXboxAvatarUrl(p.displayPicRaw),
+    platform: 'xbox',
+    ...withGamerscore(parseGamerscore(p.gamerScore)),
+  };
+}
+
+/**
+ * /v2/search is a fuzzy people search ("nF Colors" also returns "nF Colors2"), so its
+ * first result is not necessarily the account that was asked for. Only an exact
+ * match is accepted:
+ *  - "Name#1234" must equal a result's unique modern gamertag;
+ *  - "Name" matches a classic gamertag or an unsuffixed modern gamertag (case-insensitive),
+ *    then a single suffixed "Name#nnnn"; several suffixed matches are ambiguous;
+ *  - last, a single match ignoring spaces ("nFColors" -> "nF Colors").
+ */
+export function pickSearchMatch(query: string, people: OpenXBLSearchResult[]): { match?: OpenXBLSearchResult; ambiguous?: string[] } {
+  const q = normName(query);
+  const candidates = people.filter(p => p.xuid);
+  if (q.includes('#')) {
+    return { match: candidates.find(p => normName(uniqueName(p)) === q) };
+  }
+  const exact = candidates.filter(p => normName(p.gamertag) === q || (normName(p.modernGamertag) === q && !p.modernGamertagSuffix));
+  if (exact.length > 0) return { match: exact[0] };
+  const suffixed = candidates.filter(p => normName(p.modernGamertag) === q);
+  if (suffixed.length === 1) return { match: suffixed[0] };
+  if (suffixed.length > 1) return { ambiguous: suffixed.map(uniqueName) };
+  const loose = candidates.filter(p => squashName(p.gamertag) === squashName(q) || squashName(p.modernGamertag) === squashName(q));
+  if (loose.length === 1) return { match: loose[0] };
+  return {};
+}
+
+export interface OpenXBLSearchResult {
   xuid?: string;
   gamertag?: string;
-  /** /v2/search people entries carry gamerscore as a string. */
+  /** /v2/search and /v2/player/summary people entries carry gamerscore as a string. */
   gamerScore?: string;
+  modernGamertag?: string;
+  modernGamertagSuffix?: string;
+  /** Modern gamertag with its suffix ("Name#1234"), or the plain name when there is none. */
+  uniqueModernGamertag?: string;
+  displayPicRaw?: string;
   profileUsers?: Array<{
     id: string;
     settings: Array<{
@@ -278,65 +337,67 @@ export class XboxAdapter implements PlatformAdapter {
     }
   }
 
-  async resolvePlayer(gamertag: string): Promise<ApiResult<PlayerProfile>> {
-    const searchResult = await this.fetch<OpenXBLSearchResult>(`/v2/friends/search?gt=${encodeURIComponent(gamertag)}`);
-    
-    let xuid: string | undefined;
-    let displayName = gamertag;
-    let avatarUrl: string | undefined;
-    let gamerscore: number | undefined;
-    
-    if (!searchResult.success) {
-      const fuzzyResult = await this.fetch<{ people: OpenXBLSearchResult[] }>(`/v2/search/${encodeURIComponent(gamertag)}`);
-      if (!fuzzyResult.success) {
-        return fuzzyResult;
-      }
-      
-      const firstMatch = fuzzyResult.data.people?.[0];
-      if (!firstMatch?.xuid) {
-        return {
-          success: false,
-          error: {
-            error: 'Not found',
-            code: 'PLAYER_NOT_FOUND',
-            message: `Gamertag "${gamertag}" not found`,
-          },
-        };
-      }
+  async resolvePlayer(input: string): Promise<ApiResult<PlayerProfile>> {
+    const query = input.trim();
 
-      xuid = firstMatch.xuid;
-      gamerscore = parseGamerscore(firstMatch.gamerScore);
-    } else {
-      xuid = searchResult.data.xuid ?? searchResult.data.profileUsers?.[0]?.id;
-      
-      if (searchResult.data.profileUsers?.[0]) {
-        const user = searchResult.data.profileUsers[0];
-        displayName = user.settings?.find(s => s.id === 'Gamertag')?.value || gamertag;
-        avatarUrl = normalizeXboxAvatarUrl(user.settings?.find(s => s.id === 'GameDisplayPicRaw')?.value);
-        gamerscore = parseGamerscore(user.settings?.find(s => s.id === 'Gamerscore')?.value);
+    // XUID input: look it up directly (people hub), no gamertag matching involved.
+    if (XBOX_XUID_RE.test(query)) {
+      const summary = await this.fetch<{ people?: OpenXBLSearchResult[] }>(`/v2/player/summary/${query}`);
+      if (!summary.success) {
+        return summary.error.code === 'HTTP_404' ? notFound(`No Xbox account has XUID ${query}`) : summary;
       }
+      const person = summary.data.people?.find(p => p.xuid === query);
+      return person ? { success: true, data: profileFromPerson(person, query) } : notFound(`No Xbox account has XUID ${query}`);
     }
 
-    if (!xuid) {
+    // "Name#1234" can only be matched against search results (several accounts share "Name").
+    const hasSuffix = query.includes('#');
+    if (!hasSuffix) {
+      // Exact gamertag lookup (profile service).
+      const searchResult = await this.fetch<OpenXBLSearchResult>(`/v2/friends/search?gt=${encodeURIComponent(query)}`);
+      if (searchResult.success) {
+        const user = searchResult.data.profileUsers?.[0];
+        const xuid = searchResult.data.xuid ?? user?.id;
+        if (xuid) {
+          return {
+            success: true,
+            data: {
+              id: xuid,
+              displayName: user?.settings?.find(s => s.id === 'Gamertag')?.value || query,
+              avatarUrl: normalizeXboxAvatarUrl(user?.settings?.find(s => s.id === 'GameDisplayPicRaw')?.value),
+              platform: 'xbox',
+              ...withGamerscore(parseGamerscore(user?.settings?.find(s => s.id === 'Gamerscore')?.value)),
+            },
+          };
+        }
+      } else if (searchResult.error.code === 'BUDGET_EXHAUSTED') {
+        return searchResult;
+      }
+      // Not found or throttled by Xbox (the profile service often answers 429): fall back to search.
+    }
+
+    const searchTerm = hasSuffix ? query.slice(0, query.indexOf('#')).trim() : query;
+    const fuzzyResult = await this.fetch<{ people?: OpenXBLSearchResult[] }>(`/v2/search/${encodeURIComponent(searchTerm)}`);
+    if (!fuzzyResult.success) {
+      return fuzzyResult;
+    }
+    const people = fuzzyResult.data.people ?? [];
+    const pick = pickSearchMatch(query, people);
+    if (pick.match?.xuid) {
+      return { success: true, data: profileFromPerson(pick.match, query) };
+    }
+    if (pick.ambiguous) {
       return {
         success: false,
         error: {
-          error: 'Invalid response',
-          message: 'No XUID in response',
+          error: 'Ambiguous gamertag',
+          code: 'AMBIGUOUS_GAMERTAG',
+          message: `Several Xbox accounts are named "${searchTerm}": ${pick.ambiguous.slice(0, 5).join(', ')}${pick.ambiguous.length > 5 ? ', ...' : ''}. Add the #number (for example ${pick.ambiguous[0]}) or enter the XUID.`,
         },
       };
     }
-
-    return {
-      success: true,
-      data: {
-        id: xuid,
-        displayName,
-        avatarUrl,
-        platform: 'xbox',
-        ...(gamerscore !== undefined ? { gamerscore } : {}),
-      },
-    };
+    const similar = people.filter(p => p.xuid).slice(0, 3).map(p => `${uniqueName(p)} (${Number(p.gamerScore ?? 0).toLocaleString('en-US')} gamerscore)`);
+    return notFound(`Gamertag "${query}" not found${similar.length ? `. Did you mean ${similar.join(', ')}?` : ''}`);
   }
 
   async getGameLibrary(xuid: string): Promise<ApiResult<Game[]>> {

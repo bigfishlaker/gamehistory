@@ -1,3 +1,4 @@
+import { isXboxIdentifier } from './validators';
 /**
  * Input normalization for gaming platform identifiers.
  * Handles URLs, various formats, and extracts the core identifier.
@@ -132,12 +133,12 @@ export function normalizeXboxInput(input: string): NormalizationResult {
       return { success: false, error: 'Invalid Xbox profile URL' };
     }
 
-    // Treat as raw gamertag - validate format (1-15 alphanumeric + spaces)
-    if (/^[a-zA-Z0-9\s]{1,15}$/.test(trimmed)) {
+    // Raw gamertag (1-15 letters/digits/spaces), gamertag#suffix, or 16-digit XUID
+    if (isXboxIdentifier(trimmed)) {
       return { success: true, identifier: trimmed };
     }
 
-    return { success: false, error: 'Invalid Xbox gamertag format (1-15 alphanumeric characters and spaces)' };
+    return { success: false, error: 'Invalid Xbox gamertag format (1-15 letters, digits and spaces, optionally with a #suffix, or a 16-digit XUID)' };
   } catch (err) {
     return { success: false, error: 'Failed to parse Xbox input' };
   }
