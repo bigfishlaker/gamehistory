@@ -19,6 +19,26 @@ export const gamerIdCardAbi = [
     ],
     outputs: [{ name: 'tokenId', type: 'uint256' }],
   },
+  {
+    type: 'function', name: 'mintWithAllowance', stateMutability: 'nonpayable',
+    inputs: [
+      {
+        name: 'v', type: 'tuple', components: [
+          { name: 'to', type: 'address' },
+          { name: 'top6Hash', type: 'bytes32' },
+          { name: 'accountKeys', type: 'bytes32[]' },
+          { name: 'payToken', type: 'address' },
+          { name: 'price', type: 'uint256' },
+          { name: 'nonce', type: 'uint256' },
+          { name: 'deadline', type: 'uint256' },
+        ],
+      },
+      { name: 'top6Json', type: 'string' },
+      { name: 'signature', type: 'bytes' },
+    ],
+    outputs: [{ name: 'tokenId', type: 'uint256' }],
+  },
+  { type: 'function', name: 'tokenMinPrice', stateMutability: 'view', inputs: [{ name: 'token', type: 'address' }], outputs: [{ type: 'uint256' }] },
   { type: 'function', name: 'tokenOf', stateMutability: 'view', inputs: [{ name: 'owner', type: 'address' }], outputs: [{ type: 'uint256' }] },
   { type: 'function', name: 'mintNonce', stateMutability: 'view', inputs: [{ name: 'owner', type: 'address' }], outputs: [{ type: 'uint256' }] },
   { type: 'function', name: 'accountCard', stateMutability: 'view', inputs: [{ name: 'accountKey', type: 'bytes32' }], outputs: [{ type: 'uint256' }] },

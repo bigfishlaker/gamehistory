@@ -91,7 +91,11 @@ contract GamerIDCardTest is Test {
         }
     }
 
-    function _voucher(address to, bytes32[] memory keys) internal view returns (GamerIDCard.MintVoucher memory v) {
+    function _voucher(address to, bytes32[] memory keys)
+        internal
+        view
+        returns (GamerIDCard.MintVoucher memory v)
+    {
         v = GamerIDCard.MintVoucher({
             to: to,
             top6Hash: keccak256(bytes(TOP6)),
@@ -492,6 +496,90 @@ contract GamerIDCardTest is Test {
         card.mint(v, TOP6, sig);
         assertEq(card.balanceOf(alice), 0);
         assertEq(card.tokenOf(alice), 0);
+    }
+
+    function test_mintWithAllowance_relayerSubmitsPlayerPays() public {
+        vm.prank(owner);
+        card.setTokenMinPrice(address(usdc), 5_000_000);
+        usdc.mint(alice, 10_000_000);
+        GamerIDCard.MintVoucher memory v = _voucher(alice, _keys(2, 1));
+        v.payToken = address(usdc);
+        v.price = 5_000_000;
+        bytes memory sig = _sign(v, signerKey);
+
+        // Step 1 (in-game relay, zero value): the player only approves.
+        vm.prank(alice);
+        uint256 g = gasleft();
+        usdc.approve(address(card), 5_000_000);
+        assertLt(g - gasleft(), 100_000, "approve must fit the 100k relay gas cap");
+
+        // Step 2: a relayer with no USDC submits; the player's tokens pay.
+        address relayer = makeAddr("relayer");
+        vm.prank(relayer);
+        uint256 id = card.mintWithAllowance(v, TOP6, sig);
+        assertEq(card.ownerOf(id), alice);
+        assertEq(usdc.balanceOf(alice), 5_000_000);
+        assertEq(usdc.balanceOf(address(card)), 5_000_000);
+        assertEq(usdc.balanceOf(relayer), 0);
+    }
+
+    function test_mintWithAllowance_rules() public {
+        vm.prank(owner);
+        card.setTokenMinPrice(address(usdc), 5_000_000);
+        usdc.mint(alice, 10_000_000);
+        address relayer = makeAddr("relayer");
+
+        // Native-currency vouchers are refused.
+        GamerIDCard.MintVoucher memory nativeV = _voucher(alice, _keys(1, 1));
+        bytes memory nativeSig = _sign(nativeV, signerKey);
+        vm.prank(relayer);
+        vm.expectRevert(GamerIDCard.BadPayment.selector);
+        card.mintWithAllowance(nativeV, TOP6, nativeSig);
+
+        GamerIDCard.MintVoucher memory v = _voucher(alice, _keys(1, 1));
+        v.payToken = address(usdc);
+        v.price = 5_000_000;
+        bytes memory sig = _sign(v, signerKey);
+
+        // No allowance: reverts, nothing recorded.
+        vm.prank(relayer);
+        vm.expectRevert();
+        card.mintWithAllowance(v, TOP6, sig);
+        assertEq(card.tokenOf(alice), 0);
+
+        // The relayer's own allowance is never used.
+        usdc.mint(relayer, 10_000_000);
+        vm.prank(relayer);
+        usdc.approve(address(card), type(uint256).max);
+        vm.prank(relayer);
+        vm.expectRevert();
+        card.mintWithAllowance(v, TOP6, sig);
+        assertEq(usdc.balanceOf(relayer), 10_000_000);
+
+        // Bad signature still rejected.
+        vm.prank(alice);
+        usdc.approve(address(card), 5_000_000);
+        bytes memory badSig = _sign(v, 0xBEEF);
+        vm.prank(relayer);
+        vm.expectRevert(GamerIDCard.InvalidSignature.selector);
+        card.mintWithAllowance(v, TOP6, badSig);
+
+        // Paused blocks it.
+        vm.prank(owner);
+        card.pause();
+        vm.prank(relayer);
+        vm.expectRevert();
+        card.mintWithAllowance(v, TOP6, sig);
+        vm.prank(owner);
+        card.unpause();
+
+        vm.prank(relayer);
+        card.mintWithAllowance(v, TOP6, sig);
+        assertEq(card.ownerOf(1), alice);
+        // Voucher cannot be replayed.
+        vm.prank(relayer);
+        vm.expectRevert();
+        card.mintWithAllowance(v, TOP6, sig);
     }
 
     function test_plainTransfersRefused() public {

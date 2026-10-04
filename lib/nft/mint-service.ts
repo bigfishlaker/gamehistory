@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { decodeEventLog, getAddress, type Address, type Hex, type PublicClient } from 'viem';
+import { decodeEventLog, erc20Abi, getAddress, type Address, type Hex, type PublicClient, type WalletClient } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import type { KVStore } from '@/lib/store';
 import type { Game, Platform } from '@/lib/types';
@@ -10,7 +10,7 @@ import { gamerIdCardAbi } from './abi';
 import { accountKey, uniqueAccounts, type AccountRef } from './accounts';
 import type { MintConfig } from './chains';
 import type { PriceQuote } from './price';
-import { QUOTE_TTL_SECONDS } from './price';
+import { CARD_PRICE_USD, QUOTE_TTL_SECONDS } from './price';
 import type { NftSecrets } from './server-env';
 import { canonicalTop6Json, normalizeEntry, top6Hash, TOP6_SIZE } from './top6';
 import {
@@ -29,6 +29,7 @@ export const nftKeys = {
   wallet: (chainId: number, addr: string) => `nft:wallet:${chainId}:${addr.toLowerCase()}`,
   account: (chainId: number, key: string) => `nft:acct:${chainId}:${key.toLowerCase()}`,
   hold: (chainId: number, key: string) => `nft:hold:${chainId}:${key.toLowerCase()}`,
+  relay: (id: string) => `nft:relay:${id}`,
 };
 
 export interface CardSnapshot {
@@ -50,7 +51,7 @@ export interface VoucherRecord {
   inputs: ProfileInput;
   accounts: AccountRef[];
   snapshot: CardSnapshot;
-  quote: { usd: number; nativeUsd: number | null; source: PriceQuote['source'] };
+  quote: { usd: number; nativeUsd: number | null; source: PriceQuote['source'] | 'stablecoin' };
   via: 'siwe' | 'grotto';
   createdAt: number;
 }
@@ -70,8 +71,13 @@ export interface MintDeps {
   secrets: NftSecrets;
   loadProfile: (input: ProfileInput) => Promise<ProfileData>;
   quote: (chainId: number) => Promise<PriceQuote>;
+  /** Gas-only relayer for `mintWithAllowance` (see NftSecrets.relayerKey). */
+  relayer?: WalletClient;
   now?: () => number;
 }
+
+/** 'native': pay the gas token with `mint`. 'token': pay the configured ERC-20 (allowance + relayer). */
+export type PayMethod = 'native' | 'token';
 
 export class MintError extends Error {
   constructor(message: string, readonly status: number, readonly code: string) {
@@ -120,7 +126,7 @@ export function buildTop6(games: Game[], picks: string[]) {
  */
 export async function prepareVoucher(
   deps: MintDeps,
-  req: { to: Address; input: ProfileInput; picks: string[]; via: 'siwe' | 'grotto' },
+  req: { to: Address; input: ProfileInput; picks: string[]; via: 'siwe' | 'grotto'; pay?: PayMethod },
 ): Promise<VoucherRecord> {
   const { store, client, config, secrets } = deps;
   const now = deps.now?.() ?? Date.now();
@@ -133,6 +139,12 @@ export async function prepareVoucher(
     read<bigint>('tokenOf', [to]), read<bigint>('mintNonce', [to]), read<boolean>('paused'), read<bigint>('minPriceWei'),
   ]);
   if (paused) throw new MintError('Minting is paused', 503, 'PAUSED');
+  const payToken = req.pay === 'token' ? config.payToken : undefined;
+  if (req.pay === 'token' && !payToken) throw new MintError('Token payments are not enabled', 400, 'TOKEN_DISABLED');
+  const tokenFloor = payToken
+    ? ((await client.readContract({ address: config.contract, abi: gamerIdCardAbi, functionName: 'tokenMinPrice', args: [payToken.address] })) as bigint)
+    : BigInt(0);
+  if (payToken && tokenFloor === BigInt(0)) throw new MintError(`${payToken.symbol} is not accepted yet`, 400, 'TOKEN_NOT_ACCEPTED');
   if (existing !== BigInt(0)) throw new MintError('This wallet already has a GAMER.ID Card', 409, 'ALREADY_MINTED');
 
   const data = await deps.loadProfile(req.input);
@@ -168,12 +180,24 @@ export async function prepareVoucher(
     throw new MintError((e as Error).message, 400, 'BAD_TOP6');
   }
 
-  const quote = await deps.quote(chainId).catch(() => {
-    throw new MintError('Price is unavailable right now, please try again in a minute', 503, 'NO_PRICE');
-  });
-  const price = quote.priceWei > floor ? quote.priceWei : floor;
+  let price: bigint;
+  let quoteInfo: VoucherRecord['quote'];
+  if (payToken) {
+    // A USD stablecoin: $5 is exact, no oracle needed. The on-chain floor still applies.
+    const exact = BigInt(CARD_PRICE_USD) * BigInt(10) ** BigInt(payToken.decimals);
+    price = exact > tokenFloor ? exact : tokenFloor;
+    quoteInfo = { usd: CARD_PRICE_USD, nativeUsd: null, source: 'stablecoin' };
+  } else {
+    const quote = await deps.quote(chainId).catch(() => {
+      throw new MintError('Price is unavailable right now, please try again in a minute', 503, 'NO_PRICE');
+    });
+    price = quote.priceWei > floor ? quote.priceWei : floor;
+    quoteInfo = { usd: quote.usd, nativeUsd: quote.nativeUsd, source: quote.source };
+  }
 
-  const voucher: MintVoucher = { to, top6Hash: top6Hash(top6Json), accountKeys: keys, payToken: NATIVE_TOKEN, price, nonce, deadline };
+  const voucher: MintVoucher = {
+    to, top6Hash: top6Hash(top6Json), accountKeys: keys, payToken: payToken?.address ?? NATIVE_TOKEN, price, nonce, deadline,
+  };
   const account = privateKeyToAccount(secrets.voucherSignerKey);
   const signature = await account.signTypedData({
     domain: voucherDomain(chainId, config.contract),
@@ -192,13 +216,53 @@ export async function prepareVoucher(
     inputs: req.input,
     accounts,
     snapshot: snapshotFromProfile(data),
-    quote: { usd: quote.usd, nativeUsd: quote.nativeUsd, source: quote.source },
+    quote: quoteInfo,
     via: req.via,
     createdAt: now,
   };
   await store.set(nftKeys.voucher(record.id), record, VOUCHER_RECORD_TTL_SECONDS);
   await store.set(nftKeys.pending(chainId, to), record.id, VOUCHER_RECORD_TTL_SECONDS);
   return record;
+}
+
+/**
+ * POST /api/nft/relay-mint: after the player approved the pay token from their own wallet (inside
+ * The Grotto: one zero-value `approve` through the host transaction relay), our gas-only relayer
+ * submits `mintWithAllowance`. The contract pulls the token from `v.to`, never from the relayer.
+ * Only the voucher's own wallet may ask, and each voucher is relayed at most once.
+ */
+export async function relayMint(deps: MintDeps, req: { voucherId: string; caller: Address }): Promise<{ txHash: Hex }> {
+  const { store, client, config, relayer } = deps;
+  if (!relayer?.account) throw new MintError('Relayed minting is not enabled', 503, 'RELAY_DISABLED');
+  const rec = /^[A-Za-z0-9_-]{8,64}$/.test(req.voucherId) ? await store.get<VoucherRecord>(nftKeys.voucher(req.voucherId)) : null;
+  if (!rec || rec.chainId !== config.chain.id || rec.contract.toLowerCase() !== config.contract.toLowerCase()) {
+    throw new MintError('This mint link has expired. Start again to get a fresh price.', 404, 'VOUCHER_NOT_FOUND');
+  }
+  const v = voucherFromJson(rec.voucher);
+  if (v.to.toLowerCase() !== req.caller.toLowerCase()) throw new MintError('This voucher belongs to another wallet', 403, 'NOT_YOURS');
+  if (v.payToken === NATIVE_TOKEN || !config.payToken || v.payToken.toLowerCase() !== config.payToken.address.toLowerCase()) {
+    throw new MintError('This voucher is not a token payment', 400, 'NOT_TOKEN_VOUCHER');
+  }
+  const done = await store.get<Hex>(nftKeys.relay(req.voucherId));
+  if (done) return { txHash: done };
+  const nowSec = BigInt(Math.floor((deps.now?.() ?? Date.now()) / 1000));
+  if (nowSec > v.deadline) throw new MintError('This price expired. Start again to get a fresh one.', 410, 'EXPIRED');
+  const [allowance, balance] = await Promise.all([
+    client.readContract({ address: v.payToken, abi: erc20Abi, functionName: 'allowance', args: [v.to, config.contract] }) as Promise<bigint>,
+    client.readContract({ address: v.payToken, abi: erc20Abi, functionName: 'balanceOf', args: [v.to] }) as Promise<bigint>,
+  ]);
+  if (balance < v.price) throw new MintError(`Not enough ${config.payToken.symbol} in this wallet`, 402, 'INSUFFICIENT_FUNDS');
+  if (allowance < v.price) throw new MintError('Waiting for your approval to confirm', 409, 'ALLOWANCE_PENDING');
+
+  const { request } = await client.simulateContract({
+    account: relayer.account, address: config.contract, abi: gamerIdCardAbi, functionName: 'mintWithAllowance',
+    args: [v, rec.top6Json, rec.signature],
+  }).catch((e: unknown) => {
+    throw new MintError(`The mint would fail: ${(e as { shortMessage?: string }).shortMessage ?? 'reverted'}`, 400, 'MINT_WOULD_FAIL');
+  });
+  const txHash = await relayer.writeContract({ ...request, chain: config.chain } as never);
+  await store.set(nftKeys.relay(req.voucherId), txHash, VOUCHER_RECORD_TTL_SECONDS);
+  return { txHash };
 }
 
 /** Turns a pending voucher into a permanent card record once the token exists on-chain. */

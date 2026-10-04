@@ -8,6 +8,7 @@ Soulbound ERC-721 for GAMER.ID cards. OpenZeppelin v5, Solidity 0.8.30, EVM `can
 | Standard | ERC-721 + ERC-5192 (soulbound, `locked()` is always true) + ERC-4906 (metadata refresh events) |
 | Supply rule | one card per wallet (`tokenOf`), each game account on one card at a time (`accountCard`) |
 | Mint | `mint(voucher, top6Json, signature)`: EIP-712 voucher signed by the GAMER.ID server; anyone may pay, the card goes to `voucher.to` |
+| Relayed mint | `mintWithAllowance(voucher, top6Json, signature)`: ERC-20 vouchers only; `voucher.to` approved the token beforehand, anyone (our gas-only relayer) submits, the token is pulled from `voucher.to`. Built for Grotto embedded wallets, whose host relay only sends zero-value calls with 100k gas (the `approve` uses about 46k) |
 | Top 6 | `keccak256(top6Json)` must equal `voucher.top6Hash`; the JSON is emitted in `CardMinted` and never changes |
 | Price | exact `voucher.price` in the native token (or an accepted ERC-20), never below the owner-set floor (`minPriceWei` / `tokenMinPrice`) |
 | Metadata | `tokenURI = baseURI + id` (HTTPS, served by `/api/nft/[id]`); `refreshMetadata` (owner or refresher) emits ERC-4906 events |
@@ -26,8 +27,8 @@ forge test --gas-report
 ```
 
 Gas (from `forge test --gas-report` and the local end-to-end test): `mint` costs about 210k gas (median) and
-up to about 580k with 8 linked accounts and a long Top 6. A typical mint with 2 accounts and 3 games used
-310,755 gas on the local fork. Runtime bytecode is 17,612 bytes (limit 24,576).
+up to about 580k with 8 linked accounts and a long Top 6. `mintWithAllowance` costs about 160k (median). A typical mint with 2 accounts and 3 games used
+310,755 gas on the local fork. Runtime bytecode is 15,839 bytes (limit 24,576); initcode 17,656 bytes.
 
 ## Deploy
 

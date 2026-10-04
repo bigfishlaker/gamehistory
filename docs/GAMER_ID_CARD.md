@@ -25,9 +25,10 @@ The Top 6 is locked forever at mint; hours, games and tier keep updating from GA
 | `GET /api/nft/library?xbox=&steam=&psn=&epic=` | none (profile rate limit) | top 60 games by hours for the Top 6 picker |
 | `GET /api/nft/quote` | none | indicative price ($5 in the native token) |
 | `GET/POST/DELETE /api/nft/siwe` | none | SIWE nonce, verify (sets an HttpOnly 24h session cookie), sign out |
-| `POST /api/nft/voucher` | SIWE cookie or `Bearer grs_...` | checks accounts, Top 6, wallet and account limits, quotes, signs a 15-minute EIP-712 voucher |
+| `POST /api/nft/voucher` | SIWE cookie or `Bearer grs_...` | checks accounts, Top 6, wallet and account limits, quotes, signs a 15-minute EIP-712 voucher; `pay: 'token'` prices exactly $5 in the configured stablecoin |
 | `GET /api/nft/voucher/[id]` | none | voucher for the pay page (it can only mint to its `to`) |
 | `POST /api/nft/confirm` | none | records the minted card from a transaction receipt (idempotent) |
+| `POST /api/nft/relay-mint` | voucher's own wallet (`Bearer grs_...` or SIWE) | after the wallet approved the pay token, the gas-only relayer sends `mintWithAllowance` (once per voucher; 409 `ALLOWANCE_PENDING` until the approval lands) |
 | `POST /api/nft/grotto-session` | `Bearer grs_...` | Grotto wallet + existing card |
 | `GET /api/nft/[id]` | none | ERC-721 metadata (`tokenURI`) |
 | `GET /api/nft/[id]/image` | none | 800x1120 PNG card (next/og) |
@@ -61,6 +62,9 @@ route keeps the original strict policy.
 | `NFT_RPC_URL` | server | optional private RPC |
 | `NFT_TEST_PRICE_WEI` | server | price off The Grotto (default 0.01) |
 | `NFT_NATIVE_USD_PRICE` | server | manual HERESY/USD override if the price source is down |
+| `NEXT_PUBLIC_NFT_PAY_TOKEN` | all | optional ERC-20 stablecoin (e.g. Grotto USDC) for token vouchers; the owner must also call `setTokenMinPrice(token, floor)` |
+| `NEXT_PUBLIC_NFT_PAY_TOKEN_SYMBOL` / `_DECIMALS` | all | default `USDC` / `6` |
+| `NFT_RELAYER_PRIVATE_KEY` | server, secret | optional gas-only key that sends `mintWithAllowance` (Grotto-wallet path); must differ from the voucher signer; fund with a little HERESY only |
 | `GROTTO_GAME_ID` | server | optional: only accept Grotto sessions for this game |
 | `NFT_DEV_FIXTURES` | local only | `1` = offline sample library and `grs_devlocal_<address>` sessions; ignored in production builds |
 

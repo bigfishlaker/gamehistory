@@ -15,6 +15,19 @@ export interface VoucherResponse {
   symbol: string;
   snapshot: CardSnapshot;
   payUrl: string;
+  pay?: 'native' | 'token';
+}
+
+export interface MintConfigResponse {
+  open: boolean;
+  chainId?: number;
+  chainName?: string;
+  contract?: `0x${string}`;
+  symbol?: string;
+  explorer?: string | null;
+  rpcUrl?: string;
+  payToken?: { address: `0x${string}`; symbol: string; decimals: number } | null;
+  relay?: boolean;
 }
 
 export interface MintedCard {
@@ -57,13 +70,16 @@ export class ForgeApi {
     return this.call<LibraryResponse>(`/api/nft/library?${q}`);
   }
   config() {
-    return this.call<{ open: boolean; chainId?: number; chainName?: string; contract?: `0x${string}`; symbol?: string; explorer?: string | null }>('/api/nft/config');
+    return this.call<MintConfigResponse>('/api/nft/config');
   }
   quote() {
     return this.call<{ price: string; symbol: string; usd: number; source: string }>('/api/nft/quote');
   }
-  voucher(accounts: AccountsInput, top6: string[]) {
-    return this.call<VoucherResponse>('/api/nft/voucher', { method: 'POST', body: JSON.stringify({ accounts, top6 }) });
+  voucher(accounts: AccountsInput, top6: string[], pay: 'native' | 'token' = 'native') {
+    return this.call<VoucherResponse>('/api/nft/voucher', { method: 'POST', body: JSON.stringify({ accounts, top6, pay }) });
+  }
+  relayMint(voucherId: string) {
+    return this.call<{ txHash: `0x${string}` }>('/api/nft/relay-mint', { method: 'POST', body: JSON.stringify({ voucherId }) });
   }
   confirm(txHash: string) {
     return this.call<{ cards: MintedCard[] }>('/api/nft/confirm', { method: 'POST', body: JSON.stringify({ txHash }) });

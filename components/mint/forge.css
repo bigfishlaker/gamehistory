@@ -46,6 +46,7 @@
 .gf-btn:disabled { opacity: .5; cursor: not-allowed; }
 .gf-btn.is-ghost { background: transparent; border: 1px solid var(--gf-line); box-shadow: none; color: var(--gf-text); }
 .gf-btn.is-x { background: #000; border: 1px solid #333; box-shadow: none; }
+.gf-paylist { display: flex; flex-direction: column; gap: 10px; }
 .gf-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
 .gf-err { color: #ff8095; font-size: 14px; margin-top: 10px; }
 .gf-note { color: var(--gf-dim); font-size: 13px; }

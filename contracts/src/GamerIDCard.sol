@@ -161,9 +161,32 @@ contract GamerIDCard is ERC721, EIP712, Ownable2Step, Pausable, ReentrancyGuard,
         _mint(v.to, tokenId);
         // forge-lint: disable-next-line(reentrancy-events)
         emit Locked(tokenId);
-        _emitMinted(tokenId, v, top6Json);
+        _emitMinted(tokenId, v, top6Json, msg.sender);
         // Payment last (checks-effects-interactions); a failed payment reverts the whole mint.
-        _collectPayment(v.payToken, v.price);
+        _collectPayment(msg.sender, v.payToken, v.price);
+    }
+
+    /// @notice Relayed mint for wallets that can only send zero-value, low-gas calls (for example a
+    ///         Grotto embedded wallet behind the game transaction relay). `v.to` first approves
+    ///         `v.price` of `v.payToken` to this contract; anyone may then submit the voucher, and the
+    ///         token is pulled from `v.to`, never from `msg.sender`. Native-currency vouchers are refused.
+    /// @dev Front-running is harmless: the only possible outcome is the card `v.to` asked for, at the
+    ///      server-quoted price `v.to` approved.
+    function mintWithAllowance(MintVoucher calldata v, string calldata top6Json, bytes calldata signature)
+        external
+        nonReentrant
+        whenNotPaused
+        returns (uint256 tokenId)
+    {
+        if (v.payToken == address(0)) revert BadPayment();
+        _verifyVoucher(v, top6Json, signature);
+        tokenId = _recordCard(v);
+        // forge-lint: disable-next-line(unsafe-oz-erc721-mint)
+        _mint(v.to, tokenId);
+        // forge-lint: disable-next-line(reentrancy-events)
+        emit Locked(tokenId);
+        _emitMinted(tokenId, v, top6Json, v.to);
+        _collectPayment(v.to, v.payToken, v.price);
     }
 
     function _verifyVoucher(MintVoucher calldata v, string calldata top6Json, bytes calldata signature)
@@ -197,9 +220,11 @@ contract GamerIDCard is ERC721, EIP712, Ownable2Step, Pausable, ReentrancyGuard,
         _claimAccounts(tokenId, v.accountKeys);
     }
 
-    function _emitMinted(uint256 tokenId, MintVoucher calldata v, string calldata top6Json) private {
+    function _emitMinted(uint256 tokenId, MintVoucher calldata v, string calldata top6Json, address payer)
+        private
+    {
         // forge-lint: disable-next-line(reentrancy-events)
-        emit CardMinted(tokenId, v.to, msg.sender, v.top6Hash, top6Json, v.accountKeys, v.payToken, v.price);
+        emit CardMinted(tokenId, v.to, payer, v.top6Hash, top6Json, v.accountKeys, v.payToken, v.price);
     }
 
     /// @notice Owner of a card may burn it. This frees its game accounts and lets the wallet mint again.
@@ -220,7 +245,7 @@ contract GamerIDCard is ERC721, EIP712, Ownable2Step, Pausable, ReentrancyGuard,
         emit CardBurned(tokenId, owner);
     }
 
-    function _collectPayment(address payToken, uint256 price) private {
+    function _collectPayment(address payer, address payToken, uint256 price) private {
         if (payToken == address(0)) {
             if (price < minPriceWei) revert PriceBelowFloor();
             if (msg.value != price) revert BadPayment();
@@ -229,7 +254,10 @@ contract GamerIDCard is ERC721, EIP712, Ownable2Step, Pausable, ReentrancyGuard,
             uint256 floor = tokenMinPrice[payToken];
             if (floor == 0) revert TokenNotAccepted(payToken);
             if (price < floor) revert PriceBelowFloor();
-            IERC20(payToken).safeTransferFrom(msg.sender, address(this), price);
+            // `payer` is msg.sender (mint) or v.to (mintWithAllowance): v.to's own approval plus a voucher
+            // the server only signs for v.to's authenticated session, single-use via the nonce.
+            // forge-lint: disable-next-line(arbitrary-send-erc20)
+            IERC20(payToken).safeTransferFrom(payer, address(this), price);
         }
     }
 

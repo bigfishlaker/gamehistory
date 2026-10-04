@@ -8,7 +8,17 @@ export async function GET(req: NextRequest) {
   const cfg = publicMintConfig();
   const ready = !!cfg && !!readNftSecrets();
   return json(req, cfg
-    ? { open: ready, chainId: cfg.chain.id, chainName: cfg.chain.name, contract: cfg.contract, symbol: cfg.chain.nativeCurrency.symbol, explorer: cfg.chain.blockExplorers?.default.url ?? null }
+    ? {
+        open: ready,
+        chainId: cfg.chain.id,
+        chainName: cfg.chain.name,
+        contract: cfg.contract,
+        symbol: cfg.chain.nativeCurrency.symbol,
+        explorer: cfg.chain.blockExplorers?.default.url ?? null,
+        rpcUrl: cfg.chain.rpcUrls.default.http[0],
+        payToken: cfg.payToken ?? null,
+        relay: !!(cfg.payToken && readNftSecrets()?.relayerKey),
+      }
     : { open: false });
 }
 

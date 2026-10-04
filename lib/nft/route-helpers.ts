@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { getAddress, type Address } from 'viem';
+import { createWalletClient, getAddress, http, type Address } from 'viem';
+import { privateKeyToAccount } from 'viem/accounts';
 import { getStore } from '@/lib/store';
 import { loadProfileData } from '@/lib/profile/load-profile';
 import { publicMintConfig, type MintConfig } from './chains';
@@ -24,6 +25,15 @@ export function mintDeps(): MintDeps | null {
     secrets,
     loadProfile: devFixturesEnabled() ? async i => fixtureProfile(i) : loadProfileData,
     quote: chainId => quoteCardPrice(chainId),
+    ...(secrets.relayerKey && config.payToken
+      ? {
+          relayer: createWalletClient({
+            account: privateKeyToAccount(secrets.relayerKey),
+            chain: config.chain,
+            transport: http(config.rpcUrl, { fetchOptions: { headers: { 'user-agent': 'gamer-id/1.0' } }, timeout: 15_000, retryCount: 0 }),
+          }),
+        }
+      : {}),
   };
 }
 

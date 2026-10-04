@@ -11,7 +11,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  createPublicClient, createWalletClient, http, recoverTypedDataAddress, type Address, type Hex, type PublicClient,
+  createPublicClient, createWalletClient, erc20Abi, http, parseAbi, recoverTypedDataAddress, type Abi, type Address, type Hex, type PublicClient,
 } from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { MemoryStore } from '../lib/store';
@@ -20,7 +20,7 @@ import type { Game } from '../lib/types';
 import { gamerIdCardAbi } from '../lib/nft/abi';
 import { localFork } from '../lib/nft/chains';
 import { quoteCardPrice } from '../lib/nft/price';
-import { confirmMintTx, getCard, MintError, nftKeys, prepareVoucher, type MintDeps } from '../lib/nft/mint-service';
+import { confirmMintTx, getCard, MintError, nftKeys, prepareVoucher, relayMint, type MintDeps } from '../lib/nft/mint-service';
 import { cardMetadata, toCardView } from '../lib/nft/card-view';
 import { voucherDomain, voucherFromJson, voucherMessage, voucherTypes } from '../lib/nft/voucher';
 
@@ -37,10 +37,14 @@ function fakeProfile(input: ProfileInput): ProfileData {
 
 const SECRETS = (key: Hex) => ({ voucherSignerKey: key, accountHmacSecret: 'h'.repeat(32), sessionSecret: 's'.repeat(32) });
 
-function fakeClient(state: { tokenOf?: bigint; linked?: boolean; paused?: boolean } = {}): PublicClient {
+function fakeClient(state: { tokenOf?: bigint; linked?: boolean; paused?: boolean; tokenFloor?: bigint; allowance?: bigint; balance?: bigint } = {}): PublicClient {
   return {
+    simulateContract: async (args: unknown) => ({ request: args }),
     readContract: async ({ functionName }: { functionName: string }) => {
       switch (functionName) {
+        case 'tokenMinPrice': return state.tokenFloor ?? BigInt(0);
+        case 'allowance': return state.allowance ?? BigInt(0);
+        case 'balanceOf': return state.balance ?? BigInt(0);
         case 'tokenOf': return state.tokenOf ?? BigInt(0);
         case 'mintNonce': return BigInt(0);
         case 'paused': return state.paused ?? false;
@@ -66,6 +70,53 @@ function unitDeps(client: PublicClient, key = generatePrivateKey()): MintDeps {
 
 const TO = '0x00000000000000000000000000000000000000a1' as Address;
 const INPUT: ProfileInput = { xbox: ['Dylan'], steam: ['76561197960287930'], psn: [], epic: [] };
+
+const USDC = '0x00000000000000000000000000000000000000c5' as Address;
+
+describe('token payments + relayed mint (fake chain)', () => {
+  const withToken = (deps: MintDeps): MintDeps => ({ ...deps, config: { ...deps.config, payToken: { address: USDC, symbol: 'USDC', decimals: 6 } } });
+  const fakeRelayer = () => {
+    const sent: unknown[] = [];
+    return { sent, relayer: { account: privateKeyToAccount(generatePrivateKey()), writeContract: async (r: unknown) => { sent.push(r); return `0x${'ab'.repeat(32)}`; } } as unknown as MintDeps['relayer'] };
+  };
+
+  it('prices token vouchers at exactly $5 in token units (floor still applies) and refuses unaccepted tokens', async () => {
+    const rec = await prepareVoucher(withToken(unitDeps(fakeClient({ tokenFloor: BigInt(4_000_000) }))), { to: TO, input: INPUT, picks: ['portal 2'], via: 'grotto', pay: 'token' });
+    expect(rec.voucher.payToken).toBe(USDC);
+    expect(rec.voucher.price).toBe('5000000');
+    expect(rec.quote.source).toBe('stablecoin');
+    const high = await prepareVoucher(withToken(unitDeps(fakeClient({ tokenFloor: BigInt(6_000_000) }))), { to: TO, input: INPUT, picks: ['portal 2'], via: 'grotto', pay: 'token' });
+    expect(high.voucher.price).toBe('6000000');
+    await expect(prepareVoucher(withToken(unitDeps(fakeClient())), { to: TO, input: INPUT, picks: ['portal 2'], via: 'grotto', pay: 'token' }))
+      .rejects.toMatchObject({ code: 'TOKEN_NOT_ACCEPTED' });
+    await expect(prepareVoucher(unitDeps(fakeClient({ tokenFloor: BigInt(1) })), { to: TO, input: INPUT, picks: ['portal 2'], via: 'grotto', pay: 'token' }))
+      .rejects.toMatchObject({ code: 'TOKEN_DISABLED' });
+  });
+
+  it('relays only for the voucher owner, after the allowance lands, once', async () => {
+    const state = { tokenFloor: BigInt(5_000_000), allowance: BigInt(0), balance: BigInt(9_000_000) };
+    const { sent, relayer } = fakeRelayer();
+    const deps = { ...withToken(unitDeps(fakeClient(state))), relayer };
+    const rec = await prepareVoucher(deps, { to: TO, input: INPUT, picks: ['portal 2'], via: 'grotto', pay: 'token' });
+
+    await expect(relayMint({ ...deps, relayer: undefined }, { voucherId: rec.id, caller: TO })).rejects.toMatchObject({ code: 'RELAY_DISABLED' });
+    await expect(relayMint(deps, { voucherId: 'nope-nope-nope', caller: TO })).rejects.toMatchObject({ code: 'VOUCHER_NOT_FOUND' });
+    await expect(relayMint(deps, { voucherId: rec.id, caller: '0x00000000000000000000000000000000000000b2' })).rejects.toMatchObject({ code: 'NOT_YOURS' });
+    await expect(relayMint(deps, { voucherId: rec.id, caller: TO })).rejects.toMatchObject({ code: 'ALLOWANCE_PENDING' });
+    state.allowance = BigInt(5_000_000);
+    state.balance = BigInt(1);
+    await expect(relayMint(deps, { voucherId: rec.id, caller: TO })).rejects.toMatchObject({ code: 'INSUFFICIENT_FUNDS' });
+    state.balance = BigInt(9_000_000);
+    const first = await relayMint(deps, { voucherId: rec.id, caller: TO });
+    const again = await relayMint(deps, { voucherId: rec.id, caller: TO });
+    expect(again.txHash).toBe(first.txHash);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ functionName: 'mintWithAllowance' });
+
+    const native = await prepareVoucher(deps, { to: TO, input: { ...INPUT, steam: [] }, picks: ['halo infinite'], via: 'grotto' });
+    await expect(relayMint(deps, { voucherId: native.id, caller: TO })).rejects.toMatchObject({ code: 'NOT_TOKEN_VOUCHER' });
+  });
+});
 
 describe('prepareVoucher (fake chain)', () => {
   it('signs a voucher the contract signer check would accept', async () => {
@@ -188,4 +239,47 @@ e2e('end-to-end on a local anvil', () => {
     expect(card?.owner).toBe(OWNER.address);
     expect(await getCard(deps, BigInt(2))).toBeNull();
   }, 60_000);
+  it('Grotto-wallet path: player approves (fits the 100k relay gas cap), relayer mints, player pays USDC', async () => {
+    const transport = http(RPC);
+    const client = createPublicClient({ chain: localFork, transport }) as PublicClient;
+    const w = (acct: typeof OWNER) => createWalletClient({ chain: localFork, transport, account: acct });
+    const card = JSON.parse(readFileSync(ARTIFACT, 'utf8')) as { abi: unknown[]; bytecode: { object: Hex } };
+    const mock = JSON.parse(readFileSync(path.join(__dirname, '../contracts/out/GamerIDCard.t.sol/MockUSDC.json'), 'utf8')) as { abi: Abi; bytecode: { object: Hex } };
+    const signerKey = generatePrivateKey();
+    const RELAYER = privateKeyToAccount('0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6');
+    const deployed = async (h: Hex) => (await client.waitForTransactionReceipt({ hash: h })).contractAddress!;
+    const contract = await deployed(await w(OWNER).deployContract({ abi: card.abi, bytecode: card.bytecode.object, args: [OWNER.address, privateKeyToAccount(signerKey).address, OWNER.address, BigInt(1), 'x/'] }));
+    const usdc = await deployed(await w(OWNER).deployContract({ abi: mock.abi, bytecode: mock.bytecode.object, args: [] }));
+    const wait = async (h: Hex) => client.waitForTransactionReceipt({ hash: h });
+    await wait(await w(OWNER).writeContract({ address: contract, abi: parseAbi(['function setTokenMinPrice(address,uint256)']), functionName: 'setTokenMinPrice', args: [usdc, BigInt(5_000_000)] }));
+    const PLAYER2 = privateKeyToAccount(generatePrivateKey());
+    await wait(await w(OWNER).sendTransaction({ to: PLAYER2.address, value: BigInt(10) ** BigInt(16) }));
+    await wait(await w(OWNER).writeContract({ address: usdc, abi: mock.abi, functionName: 'mint', args: [PLAYER2.address, BigInt(7_000_000)] }));
+
+    const deps: MintDeps = {
+      ...unitDeps(client, signerKey),
+      config: { chain: localFork, contract, rpcUrl: RPC!, payToken: { address: usdc, symbol: 'USDC', decimals: 6 } },
+      relayer: w(RELAYER),
+      now: () => Date.now(),
+    };
+    const rec = await prepareVoucher(deps, { to: PLAYER2.address, input: { ...INPUT, xbox: ['RelayPlayer'], steam: [] }, picks: ['halo infinite'], via: 'grotto', pay: 'token' });
+    await expect(relayMint(deps, { voucherId: rec.id, caller: PLAYER2.address })).rejects.toMatchObject({ code: 'ALLOWANCE_PENDING' });
+
+    // What the Grotto relay would send from the embedded wallet: approve(card, price), value 0, gas 100k.
+    const approveHash = await w(PLAYER2).writeContract({ address: usdc, abi: erc20Abi, functionName: 'approve', args: [contract, BigInt(rec.voucher.price)], gas: BigInt(100_000) });
+    const approveRcpt = await wait(approveHash);
+    expect(approveRcpt.status).toBe('success');
+    expect(approveRcpt.gasUsed).toBeLessThan(BigInt(100_000));
+
+    const relayerUsdcBefore = (await client.readContract({ address: usdc, abi: erc20Abi, functionName: 'balanceOf', args: [RELAYER.address] })) as bigint;
+    const { txHash } = await relayMint(deps, { voucherId: rec.id, caller: PLAYER2.address });
+    const rcpt = await wait(txHash);
+    console.log(`[e2e] relay approve gas ${approveRcpt.gasUsed}, mintWithAllowance gas ${rcpt.gasUsed}`);
+    const [minted] = await confirmMintTx(deps, txHash);
+    expect(minted.owner).toBe(PLAYER2.address);
+    expect(minted.payer).toBe(PLAYER2.address);
+    expect(await client.readContract({ address: usdc, abi: erc20Abi, functionName: 'balanceOf', args: [PLAYER2.address] })).toBe(BigInt(2_000_000));
+    expect(await client.readContract({ address: usdc, abi: erc20Abi, functionName: 'balanceOf', args: [contract] })).toBe(BigInt(5_000_000));
+    expect(await client.readContract({ address: usdc, abi: erc20Abi, functionName: 'balanceOf', args: [RELAYER.address] })).toBe(relayerUsdcBefore);
+  }, 90_000);
 });
