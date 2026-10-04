@@ -10,17 +10,30 @@ const nextConfig: NextConfig = {
   // consider inferring the home directory as the workspace root. Pin it to this project.
   turbopack: {
     root: path.resolve(__dirname),
+    // Optional peers of @coinbase/cdp-sdk (via wagmi's Base Account connector); never used here.
+    resolveAlias: Object.fromEntries(
+      ['@x402/core/client', '@x402/evm', '@x402/evm/exact/client', '@x402/evm/upto/client', '@x402/svm/exact/client', '@x402/extensions']
+        .map(m => [m, './lib/stubs/optional-peer.js']),
+    ),
   },
   async headers() {
+    const securityHeaders = [
+      { key: 'X-Content-Type-Options', value: 'nosniff' },
+      { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+      { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
+      { key: 'Strict-Transport-Security', value: 'max-age=31536000; includeSubDomains' },
+    ];
+    const scriptSrc = `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ''}`;
     return [
       {
-        source: '/(.*)',
+        // Every route except the GAMER.ID Card pages (/mint, /mint/...): unchanged policy.
+        source: '/:path((?!mint(?:/|$)).*)',
         headers: [
           {
             key: 'Content-Security-Policy',
             value: [
               "default-src 'self'",
-              `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ''}`,
+              scriptSrc,
               "style-src 'self' 'unsafe-inline'",
               "img-src 'self' data: https:",
               "font-src 'self'",
@@ -32,22 +45,40 @@ const nextConfig: NextConfig = {
             key: 'X-Frame-Options',
             value: 'DENY',
           },
+          ...securityHeaders,
+        ],
+      },
+      {
+        // GAMER.ID Card pages: wallets need chain RPCs and WalletConnect, and /mint can be
+        // framed by the uploaded Grotto game wrapper (g-<hex>.games.enterthegrotto.xyz).
+        source: '/mint/:path*',
+        headers: [
           {
-            key: 'X-Content-Type-Options',
-            value: 'nosniff',
+            key: 'Content-Security-Policy',
+            value: [
+              "default-src 'self'",
+              scriptSrc,
+              "style-src 'self' 'unsafe-inline'",
+              "img-src 'self' data: blob: https:",
+              "font-src 'self' https://fonts.reown.com",
+              [
+                "connect-src 'self'",
+                'https://subnets.avax.network',
+                'https://api.avax-test.network',
+                'https://api.avax.network',
+                ...(isDev ? ['http://127.0.0.1:8545', 'ws://127.0.0.1:8545'] : []),
+                'https://*.walletconnect.com', 'wss://*.walletconnect.com',
+                'https://*.walletconnect.org', 'wss://*.walletconnect.org',
+                'https://*.reown.com', 'wss://*.reown.com',
+                'https://*.web3modal.org', 'https://*.web3modal.com',
+                'https://*.coinbase.com', 'wss://*.coinbase.com',
+                'https://api.enterthegrotto.xyz',
+              ].join(' '),
+              'frame-src https://verify.walletconnect.com https://verify.walletconnect.org https://*.reown.com',
+              `frame-ancestors 'self' https://*.games.enterthegrotto.xyz https://enterthegrotto.xyz https://www.enterthegrotto.xyz${isDev ? ' http://localhost:*' : ''}`,
+            ].join('; '),
           },
-          {
-            key: 'Referrer-Policy',
-            value: 'strict-origin-when-cross-origin',
-          },
-          {
-            key: 'Permissions-Policy',
-            value: 'camera=(), microphone=(), geolocation=()',
-          },
-          {
-            key: 'Strict-Transport-Security',
-            value: 'max-age=31536000; includeSubDomains',
-          },
+          ...securityHeaders,
         ],
       },
     ];

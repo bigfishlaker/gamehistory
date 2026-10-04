@@ -53,3 +53,6 @@ next-env.d.ts
 /DEMO_VERIFICATION.md
 /README.seed.md
 /skills-lock.json
+
+# generated Grotto game builds (npm run grotto:build)
+/grotto/dist/

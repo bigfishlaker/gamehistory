@@ -36,6 +36,10 @@ export const ROUTE_LIMITS = {
   share: { limit: 20, windowSeconds: 3600 },
   /** Extra per-IP limit for /api/profile requests that include Epic/Fortnite accounts. */
   fortnite: { limit: 60, windowSeconds: 3600 },
+  /** GAMER.ID Card: sign-in, quotes, vouchers and mint confirmations. */
+  nft: { limit: 60, windowSeconds: 3600 },
+  /** GAMER.ID Card metadata/images (fetched by wallets, explorers and indexers). */
+  nftMeta: { limit: 600, windowSeconds: 600 },
 } satisfies Record<string, RateLimitRule>;
 
 export type RouteBucket = keyof typeof ROUTE_LIMITS;

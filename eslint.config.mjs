@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Foundry project (Solidity + its own node_modules) and generated Grotto builds.
+    "contracts/**",
+    "grotto/dist/**",
   ]),
 ]);
 

@@ -1,0 +1,14 @@
+{
+  "name": "gamer-id-contracts",
+  "private": true,
+  "description": "Foundry project for the GAMER.ID card contract (Solidity deps installed via npm so no git submodules are needed).",
+  "scripts": {
+    "build": "forge build",
+    "test": "forge test -vv",
+    "gas": "forge test --gas-report"
+  },
+  "devDependencies": {
+    "@openzeppelin/contracts": "5.6.1",
+    "forge-std": "github:foundry-rs/forge-std#v1.10.0"
+  }
+}

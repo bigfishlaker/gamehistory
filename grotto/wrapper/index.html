@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>GAMER.ID Forge</title>
+<style>
+html,body,#game{margin:0;border:0;width:100%;height:100%;height:100dvh;overflow:hidden;background:#07080f}
+#game{display:block;position:fixed;inset:0}
+</style>
+</head>
+<body>
+<!--
+  Grotto wrapper: The Grotto serves this file from g-<hex>.games.enterthegrotto.xyz and hands the
+  runtime session to it. It frames the live GAMER.ID mint page and forwards only the runtime
+  handshake, with exact origins on both sides. The grs_ session is never put in a URL, logged or stored.
+-->
+<iframe id="game" title="GAMER.ID Forge"
+  sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
+  allow="clipboard-write" referrerpolicy="strict-origin"></iframe>
+<script>
+(function () {
+  'use strict';
+  var GAME_URL = '__GAME_URL__';
+  var GAME_ORIGIN = new URL(GAME_URL).origin;
+  var iframe = document.getElementById('game');
+  var runtimeMsg = null;
+  iframe.src = GAME_URL + (GAME_URL.indexOf('?') >= 0 ? '&' : '?') + 'embed=grotto';
+
+  function deliver() {
+    if (runtimeMsg && iframe.contentWindow) iframe.contentWindow.postMessage(runtimeMsg, GAME_ORIGIN);
+  }
+  window.addEventListener('message', function (event) {
+    var msg = event.data;
+    if (!msg || typeof msg !== 'object') return;
+    if (msg.type === 'grotto:runtime:hello' && event.source === iframe.contentWindow && event.origin === GAME_ORIGIN) {
+      if (runtimeMsg) deliver();
+      else window.parent.postMessage({ type: 'grotto:runtime:hello' }, '*');
+      return;
+    }
+    if (msg.type === 'grotto:runtime' && event.source === window.parent) {
+      runtimeMsg = { type: 'grotto:runtime', runtime: msg.runtime };
+      deliver();
+    }
+  });
+  window.parent.postMessage({ type: 'grotto:runtime:hello' }, '*');
+})();
+</script>
+</body>
+</html>

@@ -9,9 +9,12 @@
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "grotto:build": "node grotto/build.mjs"
   },
   "dependencies": {
+    "@rainbow-me/rainbowkit": "^2.2.11",
+    "@tanstack/react-query": "^5.104.1",
     "@upstash/redis": "^1.39.0",
     "@vercel/analytics": "^2.0.1",
     "canvas": "^3.2.3",
@@ -20,6 +23,8 @@
     "psn-api": "^2.18.1",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "viem": "^2.57.2",
+    "wagmi": "^2.19.5",
     "zod": "^4.6.5"
   },
   "devDependencies": {
@@ -28,6 +33,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitest/ui": "^5.0.2",
+    "esbuild": "^0.28.2",
     "eslint": "^9",
     "eslint-config-next": "16.3.6",
     "happy-dom": "^20.14.5",

@@ -27,6 +27,12 @@
 |---|---|---|
 | ![Top 6 export](docs/screenshots/top6-export.jpg) | ![Mobile home](docs/screenshots/mobile-home.jpg) | ![Mobile Top 6](docs/screenshots/mobile-top6.jpg) |
 
+## GAMER.ID Card (in development)
+
+A soulbound holo card minted after a short "forge your ID" game at `/mint`, also packaged as a game for
+The Grotto. Testnet only for now. See [docs/GAMER_ID_CARD.md](docs/GAMER_ID_CARD.md),
+[contracts/README.md](contracts/README.md) and [grotto/README.md](grotto/README.md).
+
 ## Tech stack
 
 - **Next.js 16** (App Router, Route Handlers, `proxy.ts`), **React 19**, **TypeScript**
